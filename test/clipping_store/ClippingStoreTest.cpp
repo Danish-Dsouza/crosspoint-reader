@@ -42,17 +42,17 @@ TEST(ClippingStore, AllocationFailureKeepsOldIndexAndUnloadReleasesIt) {
   fake::reset();
   ClippingStore store;
   ASSERT_TRUE(store.loadForBook("/book.epub", "Book", "Author", "epub"));
-  for (int i = 0; i < 4; ++i) ASSERT_EQ(add(store), Result::Added);
+  for (int i = 0; i < 16; ++i) ASSERT_EQ(add(store), Result::Added);
   fake::failAlloc = 0;
   EXPECT_EQ(add(store), Result::SaveFailed);
-  EXPECT_EQ(store.clippingCount(), 4u);
+  EXPECT_EQ(store.clippingCount(), 16u);
   std::string text;
   EXPECT_TRUE(store.readClippingText(3, text));
   EXPECT_EQ(text, "one");
   store.unload();
-  EXPECT_EQ(store.getClippings().data(), nullptr);
+  EXPECT_EQ(store.clippingAt(0), nullptr);
   EXPECT_TRUE(store.loadForBook("/book.epub", "Book", "Author", "epub"));
-  EXPECT_EQ(store.clippingCount(), 4u);
+  EXPECT_EQ(store.clippingCount(), 16u);
 }
 
 TEST(ClippingStore, CountLimitAndHeaderLimitsRoundTrip) {
@@ -73,6 +73,67 @@ TEST(ClippingStore, CountLimitAndHeaderLimitsRoundTrip) {
   EXPECT_FALSE(store.removeClippingAt(0));
   store.unload();
   EXPECT_EQ(fake::files.at(storePath())->bytes, original);
+}
+
+TEST(ClippingStore, GrowthKeepsRecordsInPlaceAndDeletionRollsBackAcrossBlocks) {
+  fake::reset();
+  ClippingStore store;
+  ASSERT_TRUE(store.loadForBook("/book.epub", "Book", "Author", "epub"));
+  const Clipping* first = nullptr;
+  for (unsigned i = 0; i < 33; ++i) {
+    Clipping clipping;
+    snprintf(clipping.id, sizeof(clipping.id), "clip-%u", i);
+    const std::string text = std::to_string(i);
+    clipping.textLength = text.size();
+    ASSERT_TRUE(store.applyRemote(clipping, text, false));
+    if (i == 0) first = store.clippingAt(0);
+    EXPECT_EQ(store.clippingAt(0), first);
+  }
+  const auto path = storePath();
+  const auto original = fake::files.at(path)->bytes;
+  // The journal succeeds; the store rewrite fails after records have shifted.
+  fake::failWrite = 1;
+  EXPECT_FALSE(store.removeClippingAt(15));
+  ASSERT_EQ(store.clippingCount(), 33u);
+  EXPECT_EQ(fake::files.at(path)->bytes, original);
+  for (unsigned i = 0; i < 33; ++i) {
+    std::string text;
+    ASSERT_TRUE(store.readClippingText(i, text));
+    EXPECT_EQ(text, std::to_string(i));
+  }
+  const Clipping removed = *store.clippingAt(15);
+  fake::failWrite = 0;
+  EXPECT_FALSE(store.applyRemote(removed, "", true));
+  EXPECT_EQ(store.clippingCount(), 33u);
+  ASSERT_TRUE(store.applyRemote(removed, "", true));
+  ASSERT_TRUE(store.removeClippingAt(15));
+  store.unload();
+  // Fail partway through allocating blocks while loading, then retry.
+  fake::failAlloc = 1;
+  EXPECT_FALSE(store.loadForBook("/book.epub", "Book", "Author", "epub"));
+  EXPECT_EQ(store.clippingCount(), 0u);
+  ASSERT_TRUE(store.loadForBook("/book.epub", "Book", "Author", "epub"));
+  ASSERT_EQ(store.clippingCount(), 31u);
+  for (unsigned i = 0; i < 31; ++i) {
+    std::string text;
+    ASSERT_TRUE(store.readClippingText(i, text));
+    EXPECT_EQ(text, std::to_string(i < 15 ? i : i + 2));
+  }
+}
+
+TEST(ClippingStore, OffsetAllocationFailureDoesNotCreateTempFile) {
+  fake::reset();
+  ClippingStore store;
+  ASSERT_TRUE(store.loadForBook("/book.epub", "Book", "Author", "epub"));
+  ASSERT_EQ(add(store), Result::Added);
+  const auto path = storePath();
+  const auto original = fake::files.at(path)->bytes;
+  fake::failAlloc = 0;
+  EXPECT_EQ(add(store, "two"), Result::SaveFailed);
+  EXPECT_EQ(store.clippingCount(), 1u);
+  EXPECT_EQ(fake::files.at(path)->bytes, original);
+  EXPECT_FALSE(Storage.exists((path + ".tmp").c_str()));
+  EXPECT_EQ(add(store, "two"), Result::Added);
 }
 
 TEST(ClippingStore, Utf8TitleAndFailedDeletionPreserveRecord) {

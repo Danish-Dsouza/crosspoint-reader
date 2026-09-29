@@ -2068,8 +2068,9 @@ void EpubReaderActivity::drawClippingHighlights(const Page& page, const int font
   const uint32_t layoutSignature =
       readerRenderSpecSignature(SETTINGS.readerRenderSpec(buildViewportWidth, buildViewportHeight));
   const auto isHighlighted = [&](const uint16_t wordIndex, const TextBlock::SourceRange range) {
-    // ponytail: at most 256 clippings per book; index by chapter if this ceiling grows.
-    for (const Clipping& clipping : CLIPPINGS.getClippings()) {
+    // ponytail: scan at most 256 C3 / 1024 S3 clippings per word; index by chapter if this becomes slow.
+    for (size_t index = 0; index < CLIPPINGS.clippingCount(); ++index) {
+      const Clipping& clipping = *CLIPPINGS.clippingAt(index);
       if (clippingContainsWord(clipping, static_cast<uint16_t>(currentSpineIndex), currentPage, section->pageCount,
                                layoutSignature, wordIndex, range.start, range.end))
         return true;

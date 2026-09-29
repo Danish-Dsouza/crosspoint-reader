@@ -1,9 +1,9 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <span>
 #include <string>
 
 #if defined(ARDUINO_ARCH_ESP32)
@@ -71,7 +71,6 @@ class ClippingStore {
   bool hasClippings() const { return clippingSize != 0; }
   size_t clippingCount() const { return clippingSize; }
   const Clipping* clippingAt(size_t index) const;
-  std::span<const Clipping> getClippings() const { return {clippings.get(), clippingSize}; }
   bool readClippingPreview(size_t index, char* out, size_t outSize, size_t& outLength) const;
   bool readClippingText(size_t index, std::string& out) const;
   bool readClippingText(const Clipping& clipping, std::string& out) const;
@@ -83,7 +82,13 @@ class ClippingStore {
  private:
   static ClippingStore instance;
 
-  std::unique_ptr<Clipping[]> clippings;
+  // Allocate only populated blocks; growing the index never duplicates existing records.
+  static constexpr size_t CLIPPINGS_PER_BLOCK = 16;
+  std::array<std::unique_ptr<Clipping[]>, (CLIPPING_MAX_PER_BOOK + CLIPPINGS_PER_BLOCK - 1) / CLIPPINGS_PER_BLOCK>
+      clippingBlocks;
+  Clipping& clippingRef(size_t index) {
+    return clippingBlocks[index / CLIPPINGS_PER_BLOCK][index % CLIPPINGS_PER_BLOCK];
+  }
   size_t clippingSize = 0;
   size_t clippingCapacity = 0;
   bool loaded = false;
