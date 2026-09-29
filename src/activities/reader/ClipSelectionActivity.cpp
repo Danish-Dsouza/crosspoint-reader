@@ -19,6 +19,9 @@
 #include "clippings/SelectionGeometry.h"
 #include "components/UIScale.h"
 #include "components/UITheme.h"
+#include "util/WordSelectionInput.h"
+
+using Input = WordSelectionInput;
 
 namespace {
 
@@ -28,26 +31,6 @@ constexpr unsigned long TOUCH_PAGE_ADVANCE_HOLD_MS = 1000;
 constexpr int TOUCH_PAGE_END_DWELL_SLOP_PX = 8;
 constexpr ClippingResult::Action SELECTION_ACTIONS[] = {ClippingResult::Action::Lookup, ClippingResult::Action::Clip,
                                                         ClippingResult::Action::Bookmark};
-
-enum ButtonEvent : uint8_t {
-  INPUT_LEFT = 1,
-  INPUT_RIGHT = 2,
-  INPUT_UP = 4,
-  INPUT_DOWN = 8,
-  INPUT_CONFIRM = 16,
-  INPUT_BACK = 32,
-  INPUT_PREVIOUS = 64,
-  INPUT_NEXT = 128
-};
-constexpr uint32_t BUTTON_REPEAT_MS = 500;
-
-uint8_t buttonEdges(const MappedInputManager& input) {
-  using B = MappedInputManager::Button;
-  return (input.wasPressed(B::ScreenLeft) ? INPUT_LEFT : 0) | (input.wasPressed(B::ScreenRight) ? INPUT_RIGHT : 0) |
-         (input.wasPressed(B::ScreenUp) ? INPUT_UP : 0) | (input.wasPressed(B::ScreenDown) ? INPUT_DOWN : 0) |
-         (input.wasReleased(B::Confirm) ? INPUT_CONFIRM : 0) | (input.wasReleased(B::Back) ? INPUT_BACK : 0) |
-         (input.wasPressed(B::NavPrevious) ? INPUT_PREVIOUS : 0) | (input.wasPressed(B::NavNext) ? INPUT_NEXT : 0);
-}
 
 bool hasVisibleText(const char* text) {
   if (!text) return false;
@@ -394,17 +377,7 @@ bool ClipSelectionActivity::handleHomeGesture() {
 }
 
 void ClipSelectionActivity::loopButtons() {
-  uint8_t buttons = buttonEdges(mappedInput);
-  const uint8_t held = (mappedInput.isPressed(MappedInputManager::Button::ScreenLeft) ? INPUT_LEFT : 0) |
-                       (mappedInput.isPressed(MappedInputManager::Button::ScreenRight) ? INPUT_RIGHT : 0);
-  const uint32_t now = millis();
-  if (held != repeatingButton || (buttons & (INPUT_LEFT | INPUT_RIGHT))) {
-    repeatingButton = held;
-    lastButtonRepeat = now;
-  } else if ((held == INPUT_LEFT || held == INPUT_RIGHT) && now - lastButtonRepeat >= BUTTON_REPEAT_MS) {
-    buttons |= held;
-    lastButtonRepeat = now;
-  }
+  const uint8_t buttons = selectionInput.pollButtons(mappedInput, millis());
   if (buttons) {
     if (pendingButtonCount < pendingButtons.size()) {
       pendingButtons[pendingButtonCount++] = buttons;
@@ -542,8 +515,8 @@ void ClipSelectionActivity::loop() {
     return;
   }
 
-  const uint8_t buttons = buttonEdges(mappedInput);
-  if (buttons & (INPUT_BACK | INPUT_CONFIRM)) {
+  const uint8_t buttons = Input::buttonEdges(mappedInput);
+  if (buttons & (Input::INPUT_BACK | Input::INPUT_CONFIRM)) {
     handleButtons(buttons);
     return;
   }
@@ -562,11 +535,12 @@ void ClipSelectionActivity::loop() {
 }
 
 bool ClipSelectionActivity::handleButtons(const uint8_t buttons) {
-  if (actionPopup.handleButtons(buttons & INPUT_PREVIOUS, buttons & INPUT_NEXT, buttons & INPUT_CONFIRM,
-                                buttons & INPUT_BACK, [this] { requestUpdate(); }))
+  if (actionPopup.handleButtons(buttons & Input::INPUT_PREVIOUS, buttons & Input::INPUT_NEXT,
+                                buttons & Input::INPUT_CONFIRM, buttons & Input::INPUT_BACK,
+                                [this] { requestUpdate(); }))
     return true;
 
-  if (buttons & INPUT_BACK) {
+  if (buttons & Input::INPUT_BACK) {
     if (rangeStart >= 0) {
       rangeStart = -1;
       requestUpdate();
@@ -576,7 +550,7 @@ bool ClipSelectionActivity::handleButtons(const uint8_t buttons) {
     return true;
   }
 
-  if (buttons & INPUT_CONFIRM) {
+  if (buttons & Input::INPUT_CONFIRM) {
     if (rangeStart >= 0 && !mappedInput.hasTouch()) {
       static constexpr StrId OPTIONS[] = {StrId::STR_LOOKUP, StrId::STR_CLIP, StrId::STR_BOOKMARK_OPTION};
       actionPopup.show(StrId::STR_SELECT, OPTIONS, 3, 0,
@@ -588,13 +562,14 @@ bool ClipSelectionActivity::handleButtons(const uint8_t buttons) {
     return true;
   }
 
-  const int next = selectionGeometry::horizontalIndex(selected, static_cast<int>(wordCount), buttons & INPUT_LEFT,
-                                                      buttons & INPUT_RIGHT, words[selected].isRtl);
+  const int next =
+      selectionGeometry::horizontalIndex(selected, static_cast<int>(wordCount), buttons & Input::INPUT_LEFT,
+                                         buttons & Input::INPUT_RIGHT, words[selected].isRtl);
   if (next != selected) {
     selectIndex(next);
-  } else if (buttons & INPUT_UP) {
+  } else if (buttons & Input::INPUT_UP) {
     moveVertical(-1);
-  } else if (buttons & INPUT_DOWN) {
+  } else if (buttons & Input::INPUT_DOWN) {
     moveVertical(1);
   }
   return false;

@@ -1835,8 +1835,8 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
     renderer.clearScreen();
   }
 
-  page->render(renderer, fontId, orientedMarginLeft, orientedMarginTop);
   drawClippingHighlights(*page, fontId, orientedMarginTop, orientedMarginLeft);
+  page->render(renderer, fontId, orientedMarginLeft, orientedMarginTop);
   renderStatusBar();
   const auto tBwRender = millis();
 
@@ -2064,6 +2064,14 @@ void EpubReaderActivity::drawClippingHighlights(const Page& page, const int font
     return;
   }
 
+  size_t chapterClippings = 0;
+  for (size_t i = 0; i < CLIPPINGS.clippingCount(); ++i) {
+    if (CLIPPINGS.clippingAt(i)->spineIndex == currentSpineIndex) ++chapterClippings;
+  }
+  if (!chapterClippings) return;
+
+  const auto started = millis();
+  size_t highlightedWords = 0;
   const uint16_t currentPage = static_cast<uint16_t>(section->currentPage);
   const uint32_t layoutSignature =
       readerRenderSpecSignature(SETTINGS.readerRenderSpec(buildViewportWidth, buildViewportHeight));
@@ -2084,7 +2092,6 @@ void EpubReaderActivity::drawClippingHighlights(const Page& page, const int font
     const auto& line = static_cast<const PageLine&>(*element);
     const auto& block = line.getBlock();
     if (!block || !block->valid()) continue;
-    bool redrawLine = false;
     bool hasPreviousHighlight = false;
     int previousHighlightX = 0;
     int previousHighlightWidth = 0;
@@ -2118,15 +2125,14 @@ void EpubReaderActivity::drawClippingHighlights(const Page& page, const int font
         previousHighlightX = x;
         previousHighlightWidth = width;
         hasPreviousHighlight = true;
-        redrawLine = true;
+        ++highlightedWords;
       } else {
         hasPreviousHighlight = false;
       }
     }
-    if (redrawLine) {
-      block->render(renderer, fontId, orientedMarginLeft + line.xPos, orientedMarginTop + line.yPos);
-    }
   }
+  LOG_DBG("CLIP", "Highlight pass: chapter_clips=%u highlighted_words=%u time=%lums",
+          static_cast<unsigned>(chapterClippings), static_cast<unsigned>(highlightedWords), millis() - started);
 }
 
 void EpubReaderActivity::renderStatusBar() const {

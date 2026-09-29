@@ -8,6 +8,7 @@
 
 #include "activities/Activity.h"
 #include "util/Dictionary.h"
+#include "util/WordSelectionInput.h"
 
 // Word selection over the current reader page: Left/Right step through words
 // in visual order, Up/Down jump rows, Confirm looks the word up and opens
@@ -59,6 +60,7 @@ class DictionaryWordSelectActivity final : public Activity {
   std::vector<WordBox> words;
   int selected = 0;
   uint16_t rowCount = 0;
+  WordSelectionInput selectionInput;
 
   std::string lookupText;
   bool lookupPending = false;

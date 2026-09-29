@@ -14,6 +14,9 @@
 #include "DictionaryDefinitionActivity.h"
 #include "clippings/SelectionGeometry.h"
 #include "components/UITheme.h"
+#include "util/WordSelectionInput.h"
+
+using Input = WordSelectionInput;
 
 namespace {
 
@@ -261,6 +264,7 @@ void DictionaryWordSelectActivity::performLookup() {
 }
 
 void DictionaryWordSelectActivity::loop() {
+  const uint8_t buttons = selectionInput.pollButtons(mappedInput, millis());
   if (lookupPending) {
     lookupPending = false;
     performLookup();
@@ -278,11 +282,11 @@ void DictionaryWordSelectActivity::loop() {
     return;
   }
 
-  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+  if ((buttons & Input::INPUT_BACK)) {
     finish();
     return;
   }
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) && !words.empty()) {
+  if ((buttons & Input::INPUT_CONFIRM) && !words.empty()) {
     performLookup();
     return;
   }
@@ -311,14 +315,13 @@ void DictionaryWordSelectActivity::loop() {
   }
 
   const int next = selectionGeometry::horizontalIndex(selected, static_cast<int>(words.size()),
-                                                      mappedInput.wasPressed(MappedInputManager::Button::ScreenLeft),
-                                                      mappedInput.wasPressed(MappedInputManager::Button::ScreenRight));
+                                                      buttons & Input::INPUT_LEFT, buttons & Input::INPUT_RIGHT);
   if (next != selected) {
     selected = next;
     requestUpdate();
-  } else if (mappedInput.wasPressed(MappedInputManager::Button::ScreenUp)) {
+  } else if (buttons & Input::INPUT_UP) {
     moveVertical(-1);
-  } else if (mappedInput.wasPressed(MappedInputManager::Button::ScreenDown)) {
+  } else if (buttons & Input::INPUT_DOWN) {
     moveVertical(1);
   }
 }

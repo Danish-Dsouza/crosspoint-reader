@@ -12,6 +12,7 @@
 #include "activities/Activity.h"
 #include "components/OptionPopup.h"
 #include "components/themes/BaseTheme.h"
+#include "util/WordSelectionInput.h"
 
 class ClipSelectionActivity final : public Activity {
  public:
@@ -75,8 +76,7 @@ class ClipSelectionActivity final : public Activity {
   // ponytail: retain 16 button frames during refresh; increase only if overflow is observed.
   std::array<uint8_t, 16> pendingButtons{};
   size_t pendingButtonCount = 0;
-  uint8_t repeatingButton = 0;
-  uint32_t lastButtonRepeat = 0;
+  WordSelectionInput selectionInput;
   int fontId = 0;
   int lineHeight = 0;
   std::unique_ptr<WordBox[]> words;

@@ -8,7 +8,8 @@ ROOT = Path(__file__).resolve().parents[1]
 source = (ROOT / "src/activities/reader/ClipSelectionActivity.cpp").read_text()
 header = (ROOT / "src/activities/reader/ClipSelectionActivity.h").read_text()
 # Compile the production poller with a controllable render lock and button clock.
-helpers = "enum ButtonEvent" + source.split("enum ButtonEvent", 1)[1].split("bool hasVisibleText", 1)[0]
+shared = (ROOT / "src/util/WordSelectionInput.h").read_text()
+helpers = "class WordSelectionInput" + shared.split("class WordSelectionInput", 1)[1] + "\nusing Input = WordSelectionInput;\n"
 method = "void ClipSelectionActivity::loopButtons()" + source.split(
     "void ClipSelectionActivity::loopButtons()", 1
 )[1].split("void ClipSelectionActivity::loop()", 1)[0]
@@ -43,8 +44,8 @@ struct ClipSelectionActivity {
   MappedInputManager mappedInput;
   int selected = 5, confirmed = -1;
   bool handleButtons(uint8_t buttons) {
-    if (buttons & INPUT_CONFIRM) { confirmed = selected; return true; }
-    selected += bool(buttons & INPUT_RIGHT) - bool(buttons & INPUT_LEFT);
+    if (buttons & Input::INPUT_CONFIRM) { confirmed = selected; return true; }
+    selected += bool(buttons & Input::INPUT_RIGHT) - bool(buttons & Input::INPUT_LEFT);
     return false;
   }
   void loopButtons();
@@ -57,12 +58,12 @@ int main() {
     activity.loopButtons();
   };
   // Two quick taps and Confirm arrive while refresh owns the lock.
-  poll(0, INPUT_RIGHT, INPUT_RIGHT);
+  poll(0, Input::INPUT_RIGHT, Input::INPUT_RIGHT);
   poll(40, 0, 0);
-  poll(90, INPUT_RIGHT, INPUT_RIGHT);
+  poll(90, Input::INPUT_RIGHT, Input::INPUT_RIGHT);
   poll(130, 0, 0);
-  poll(180, 0, 0, INPUT_CONFIRM);
-  poll(220, INPUT_LEFT, INPUT_LEFT);
+  poll(180, 0, 0, Input::INPUT_CONFIRM);
+  poll(220, Input::INPUT_LEFT, Input::INPUT_LEFT);
   poll(250, 0, 0);
   assert(activity.selected == 5 && activity.pendingButtonCount == 4);
   RenderLock::busy = false;
@@ -73,25 +74,25 @@ int main() {
   assert(activity.selected == 6 && activity.pendingButtonCount == 0);
   // Hold repeats are captured during refresh, then stop upon release.
   RenderLock::busy = true;
-  poll(1000, INPUT_RIGHT, INPUT_RIGHT);
-  poll(1499, 0, INPUT_RIGHT);
+  poll(1000, Input::INPUT_RIGHT, Input::INPUT_RIGHT);
+  poll(1499, 0, Input::INPUT_RIGHT);
   assert(activity.pendingButtonCount == 1);
-  poll(1500, 0, INPUT_RIGHT);
-  poll(2000, 0, INPUT_RIGHT);
+  poll(1500, 0, Input::INPUT_RIGHT);
+  poll(2000, 0, Input::INPUT_RIGHT);
   poll(2010, 0, 0);
   RenderLock::busy = false;
   poll(3000, 0, 0);
   assert(activity.selected == 9 && activity.pendingButtonCount == 0);
   // A new press resets the repeat delay; unsigned elapsed time survives wrap.
-  poll(UINT32_MAX - 100, INPUT_LEFT, INPUT_LEFT);
-  poll(398, 0, INPUT_LEFT);
+  poll(UINT32_MAX - 100, Input::INPUT_LEFT, Input::INPUT_LEFT);
+  poll(398, 0, Input::INPUT_LEFT);
   assert(activity.selected == 8);
-  poll(399, 0, INPUT_LEFT);
+  poll(399, 0, Input::INPUT_LEFT);
   assert(activity.selected == 7);
   poll(410, 0, 0);
   // Overflow preserves the queued prefix and reports failure instead of overwriting it.
   RenderLock::busy = true;
-  for (int i = 0; i < 17; ++i) poll(500 + i, INPUT_RIGHT, 0);
+  for (int i = 0; i < 17; ++i) poll(500 + i, Input::INPUT_RIGHT, 0);
   assert(activity.pendingButtonCount == 16 && overflows == 1);
   RenderLock::busy = false;
   poll(600, 0, 0);
