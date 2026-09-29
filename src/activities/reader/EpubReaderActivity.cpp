@@ -77,6 +77,21 @@ bool hasEmSpacePrefix(const char* text) {
          static_cast<uint8_t>(text[2]) == 0x83;
 }
 
+Rect clippingWordRect(const GfxRenderer& renderer, const int fontId, const PageLine& line, const uint16_t i,
+                      const int top, const int left, const int wordWidth) {
+  const auto& block = line.getBlock();
+  const char* text = block->wordText(i);
+  const auto style = static_cast<EpdFontFamily::Style>(block->wordStyle(i) & ~EpdFontFamily::UNDERLINE);
+  const int skipX = hasEmSpacePrefix(text) ? renderer.getTextAdvanceX(fontId, "\xe2\x80\x83", style) : 0;
+  int width = wordWidth - skipX;
+  if (i + 1 < block->wordCount() && block->wordXpos(i + 1) > block->wordXpos(i)) {
+    width = std::min(width, static_cast<int>(block->wordXpos(i + 1) - block->wordXpos(i) - skipX));
+  }
+  return Rect{left + line.xPos + block->wordXpos(i) + skipX,
+              top + line.yPos + block->getRubyShift(renderer.getFontAscenderSize(fontId)), width,
+              renderer.getLineHeight(fontId)};
+}
+
 int clampPercent(int percent) {
   if (percent < 0) {
     return 0;
@@ -379,6 +394,19 @@ void EpubReaderActivity::startClipSelection(const int initialX, const int initia
        ++pageOffset) {
     auto page = section->loadPage(pageNumber + pageOffset);
     if (!page) break;
+    if (pageOffset == 0 && initialX >= 0 && CLIPPINGS.hasClippings()) {
+      RenderLock lock;
+      const int clippingIndex = clippingAtPoint(*page, initialX, initialY);
+      if (clippingIndex >= 0) {
+        const bool removed = CLIPPINGS.removeClippingAt(static_cast<size_t>(clippingIndex));
+        if (!removed) LOG_ERR("CLIP", "Failed to delete highlighted clipping %d", clippingIndex);
+        clippingMessage = removed ? StrId::STR_CLIPPING_REMOVED : StrId::STR_CLIPPING_DELETE_FAILED;
+        showClippingMessage = true;
+        clippingMessageTime = millis();
+        requestUpdate();
+        return;
+      }
+    }
     pages.push_back(std::move(page));
   }
   if (pages.empty()) {
@@ -467,8 +495,9 @@ void EpubReaderActivity::startClipSelection(const int initialX, const int initia
         LOG_ERR("CLIP", "Failed to roll back clipping after export failure");
       }
     }
-    clippingSaved = addResult == ClippingStore::AddResult::Added && exported;
-    clippingLimitReached = addResult == ClippingStore::AddResult::LimitReached;
+    clippingMessage = addResult == ClippingStore::AddResult::LimitReached ? StrId::STR_CLIPPING_LIMIT_REACHED
+                      : exported                                          ? StrId::STR_CLIPPING_SAVED
+                                                                          : StrId::STR_CLIPPING_FAILED;
     showClippingMessage = true;
     clippingMessageTime = millis();
     requestUpdate();
@@ -1664,9 +1693,7 @@ void EpubReaderActivity::renderBook() {
   }
 
   if (showClippingMessage) {
-    GUI.drawPopup(renderer, clippingLimitReached ? tr(STR_CLIPPING_LIMIT_REACHED)
-                            : clippingSaved      ? tr(STR_CLIPPING_SAVED)
-                                                 : tr(STR_CLIPPING_FAILED));
+    GUI.drawPopup(renderer, I18N.get(clippingMessage));
   }
 
   // Toolbar menu: overlay the toolbar / panel on top of the freshly rendered page.
@@ -1994,6 +2021,39 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   }
 }
 
+int EpubReaderActivity::clippingAtPoint(const Page& page, const int x, const int y) const {
+  int top, right, bottom, left;
+  renderer.getOrientedViewableTRBL(&top, &right, &bottom, &left);
+  const int fontId = SETTINGS.getReaderFontId();
+  const uint32_t signature =
+      readerRenderSpecSignature(SETTINGS.readerRenderSpec(buildViewportWidth, buildViewportHeight));
+  uint16_t wordIndex = 0;
+  for (const auto& element : page.elements) {
+    if (element->getTag() != TAG_PageLine) continue;
+    const auto& line = static_cast<const PageLine&>(*element);
+    const auto& block = line.getBlock();
+    if (!block || !block->valid()) continue;
+    for (uint16_t i = 0; i < block->wordCount(); ++i) {
+      const char* text = block->wordText(i);
+      if (!hasVisibleWordText(text)) continue;
+      const auto style = static_cast<EpdFontFamily::Style>(block->wordStyle(i) & ~EpdFontFamily::UNDERLINE);
+      const int width = renderer.getTextAdvanceX(fontId, text, style);
+      if (width <= 0) continue;
+      const uint16_t index = wordIndex++;
+      const Rect rect =
+          clippingWordRect(renderer, fontId, line, i, top + SETTINGS.screenMargin, left + SETTINGS.screenMargin, width);
+      if (x < rect.x || x >= rect.x + rect.width || y < rect.y || y >= rect.y + rect.height) continue;
+      const auto range = block->wordSourceRange(i);
+      for (size_t j = 0; j < CLIPPINGS.clippingCount(); ++j) {
+        if (clippingContainsWord(*CLIPPINGS.clippingAt(j), currentSpineIndex, section->currentPage, section->pageCount,
+                                 signature, index, range.start, range.end))
+          return static_cast<int>(j);
+      }
+    }
+  }
+  return -1;
+}
+
 void EpubReaderActivity::drawClippingHighlights(const Page& page, const int fontId, const int orientedMarginTop,
                                                 const int orientedMarginLeft) const {
   if (!section || !CLIPPINGS.hasClippings() || section->currentPage < 0 || section->currentPage >= section->pageCount) {
@@ -2006,16 +2066,9 @@ void EpubReaderActivity::drawClippingHighlights(const Page& page, const int font
   const auto isHighlighted = [&](const uint16_t wordIndex, const TextBlock::SourceRange range) {
     // ponytail: at most 256 clippings per book; index by chapter if this ceiling grows.
     for (const Clipping& clipping : CLIPPINGS.getClippings()) {
-      if (clipping.spineIndex != static_cast<uint16_t>(currentSpineIndex)) continue;
-      if (clipping.startOffset != UINT32_MAX && clipping.endOffset != UINT32_MAX) {
-        if (range.start != UINT32_MAX && range.end > clipping.startOffset && range.start < clipping.endOffset)
-          return true;
-      } else if (clippingStoredRangeMatchesLayout(clipping, section->pageCount, layoutSignature) &&
-                 currentPage >= clipping.startPage && currentPage <= clipping.endPage &&
-                 (currentPage != clipping.startPage || wordIndex >= clipping.startWordIndex) &&
-                 (currentPage != clipping.endPage || wordIndex <= clipping.endWordIndex)) {
+      if (clippingContainsWord(clipping, static_cast<uint16_t>(currentSpineIndex), currentPage, section->pageCount,
+                               layoutSignature, wordIndex, range.start, range.end))
         return true;
-      }
     }
     return false;
   };
@@ -2030,7 +2083,6 @@ void EpubReaderActivity::drawClippingHighlights(const Page& page, const int font
     bool hasPreviousHighlight = false;
     int previousHighlightX = 0;
     int previousHighlightWidth = 0;
-    const int rubyShift = block->getRubyShift(renderer.getFontAscenderSize(fontId));
     for (uint16_t i = 0; i < block->wordCount(); ++i) {
       const char* text = block->wordText(i);
       if (!hasVisibleWordText(text)) continue;
@@ -2043,13 +2095,10 @@ void EpubReaderActivity::drawClippingHighlights(const Page& page, const int font
         continue;
       }
 
-      const int skipX = hasEmSpacePrefix(text) ? renderer.getTextAdvanceX(fontId, "\xe2\x80\x83", style) : 0;
-      const int x = orientedMarginLeft + line.xPos + block->wordXpos(i) + skipX;
-      const int y = orientedMarginTop + line.yPos + rubyShift;
-      width -= skipX;
-      if (i + 1 < block->wordCount() && block->wordXpos(i + 1) > block->wordXpos(i)) {
-        width = std::min(width, static_cast<int>(block->wordXpos(i + 1) - block->wordXpos(i) - skipX));
-      }
+      const Rect rect = clippingWordRect(renderer, fontId, line, i, orientedMarginTop, orientedMarginLeft, width);
+      const int x = rect.x;
+      const int y = rect.y;
+      width = rect.width;
       if (width > 0) {
         const int highlightRight = x + width;
         const int previousHighlightRight = previousHighlightX + previousHighlightWidth;

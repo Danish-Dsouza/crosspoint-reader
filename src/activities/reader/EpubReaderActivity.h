@@ -45,8 +45,7 @@ class EpubReaderActivity final : public ReaderActivity {
   bool showDictionaryMessage = false;
   unsigned long dictionaryMessageTime = 0UL;
   bool showClippingMessage = false;
-  bool clippingSaved = false;
-  bool clippingLimitReached = false;
+  StrId clippingMessage = StrId::STR_CLIPPING_SAVED;
   unsigned long clippingMessageTime = 0UL;
   bool currentPageBookmarked = false;
   int idlePrewarmSpine = -1;
@@ -169,6 +168,7 @@ class EpubReaderActivity final : public ReaderActivity {
   void openFootnoteSelect(bool reopenMenuOnCancel);
   void openDictionaryWordSelect();
   void startClipSelection(int initialX = -1, int initialY = -1);
+  int clippingAtPoint(const Page& page, int x, int y) const;
   void openClippings();
   bool launchKOReaderSync();
   unsigned long confirmLongPressThreshold() const;

@@ -696,7 +696,7 @@ Bookmarks are stored in the `.crosspoint/bookmarks` folder in the JSON format.
 
 ### 5.3 Clippings and Highlights
 
-Select **Create Clipping** from the Reader Menu, move to the first word, and press **Confirm**. Move to the last word and press **Confirm** again to save the range. On touch devices, press and hold a word in the reader to select it. Drag either selection handle to adjust the range, then tap **Look Up**, **Clip**, or **Bookmark** above it. Releasing a handle keeps the selection open; tapping outside the text dismisses it. **Look Up** searches the selected text in your dictionary; **Bookmark** toggles the bookmark on the selection’s final page. Saved ranges appear with a gray highlight when that page is reopened.
+Select **Create Clipping** from the Reader Menu, move to the first word, and press **Confirm**. Move to the last word and press **Confirm** again to save the range. On touch devices, press and hold a word in the reader to select it. Drag either selection handle to adjust the range, then tap **Look Up**, **Clip**, or **Bookmark** above it. Releasing a handle keeps the selection open; tapping outside the text dismisses it. **Look Up** searches the selected text in your dictionary; **Bookmark** toggles the bookmark on the selection’s final page. Saved ranges appear with a gray highlight when that page is reopened. Press and hold highlighted text to remove that clipping; its deletion is sent on the next manual sync when **Sync Clippings** is enabled.
 
 Select **View Clippings** to browse saved excerpts for the current book. Press **Confirm** to read an individual clipping, or hold **Confirm** for about 0.7 seconds to delete it. Touch devices can open a clipping with a tap or delete it with a long press.
 

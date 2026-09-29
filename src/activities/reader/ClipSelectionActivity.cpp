@@ -264,6 +264,22 @@ int ClipSelectionActivity::wordAt(const int x, int y) const {
   return -1;
 }
 
+int ClipSelectionActivity::dragWordAt(const int x, int y) const {
+  y -= textOffset();
+  int best = -1;
+  Rect nearest{};
+  for (int i = 0; i < static_cast<int>(wordCount); ++i) {
+    const WordBox& word = words[i];
+    if (word.pageOffset != currentPageOffset) continue;
+    const Rect candidate{word.x, word.y, word.width, word.height};
+    if (best < 0 || selectionGeometry::nearerWord(candidate, nearest, x, y)) {
+      nearest = candidate;
+      best = i;
+    }
+  }
+  return best;
+}
+
 bool ClipSelectionActivity::selectionContains(const int x, const int y) const {
   const int offset = textOffset();
   const WordBox* previous = nullptr;
@@ -455,7 +471,7 @@ void ClipSelectionActivity::loop() {
       touchDragHasMoved = touchDragHasMoved || deltaX >= TOUCH_DRAG_MOVEMENT_PX || deltaX <= -TOUCH_DRAG_MOVEMENT_PX ||
                           deltaY >= TOUCH_DRAG_MOVEMENT_PX || deltaY <= -TOUCH_DRAG_MOVEMENT_PX;
 
-      const int hit = wordAt(touchX + dragOffsetX, touchY + dragOffsetY);
+      const int hit = dragWordAt(touchX + dragOffsetX, touchY + dragOffsetY);
       if (hit >= 0) {
         const int previousOffset = textOffset();
         selectIndex(hit);
@@ -467,7 +483,7 @@ void ClipSelectionActivity::loop() {
       // next preloaded page.
       const int nextPageStart = nextPageStartIndexForTouchDrag();
       if (nextPageStart >= 0 &&
-          (hit >= 0 || isWithinCurrentPageEndDwellSlop(touchX + dragOffsetX, touchY + dragOffsetY - textOffset()))) {
+          isWithinCurrentPageEndDwellSlop(touchX + dragOffsetX, touchY + dragOffsetY - textOffset())) {
         const unsigned long now = millis();
         if (touchDragPageEndIndex != selected) {
           touchDragPageEndIndex = selected;

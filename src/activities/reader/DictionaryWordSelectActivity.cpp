@@ -193,7 +193,12 @@ void DictionaryWordSelectActivity::performLookup() {
       ok && dict.lookup(lookupText.empty() ? words[selected].text : lookupText.c_str(), definition, headword, &result);
 
   if (found) {
-    popup = Popup::None;
+    {
+      RenderLock lock;
+      popup = Popup::None;
+      // Direct lookup returns to the reader; this page is no longer needed.
+      if (!lookupText.empty()) page.reset();
+    }
     auto activity = makeUniqueNoThrow<DictionaryDefinitionActivity>(renderer, mappedInput, std::move(headword),
                                                                     std::move(definition), dict.definitionsAreHtml());
     if (!activity) {
@@ -408,9 +413,9 @@ void DictionaryWordSelectActivity::render(RenderLock&&) {
   // the in-RAM glyph cache during the real draw.
   auto* fcm = renderer.getFontCacheManager();
   auto scope = fcm->createPrewarmScope();
-  page->render(renderer, fontId, marginLeft, marginTop);
+  if (page) page->render(renderer, fontId, marginLeft, marginTop);
   scope.endScanAndPrewarm();
-  page->render(renderer, fontId, marginLeft, marginTop);
+  if (page) page->render(renderer, fontId, marginLeft, marginTop);
 
   if (!words.empty()) {
     drawHighlightWithSnapshot();

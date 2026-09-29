@@ -99,4 +99,16 @@ inline bool clippingStoredRangeMatchesLayout(const Clipping& clipping, const uin
          clipping.layoutSignature == currentLayoutSignature;
 }
 
+inline bool clippingContainsWord(const Clipping& clipping, const uint16_t spineIndex, const uint16_t page,
+                                 const uint16_t pageCount, const uint32_t layoutSignature, const uint16_t wordIndex,
+                                 const uint32_t sourceStart, const uint32_t sourceEnd) {
+  if (clipping.spineIndex != spineIndex) return false;
+  if (clipping.startOffset != UINT32_MAX && clipping.endOffset != UINT32_MAX) {
+    return sourceStart != UINT32_MAX && sourceEnd > clipping.startOffset && sourceStart < clipping.endOffset;
+  }
+  return clippingStoredRangeMatchesLayout(clipping, pageCount, layoutSignature) && page >= clipping.startPage &&
+         page <= clipping.endPage && (page != clipping.startPage || wordIndex >= clipping.startWordIndex) &&
+         (page != clipping.endPage || wordIndex <= clipping.endWordIndex);
+}
+
 #define CLIPPINGS ClippingStore::getInstance()

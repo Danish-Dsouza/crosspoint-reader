@@ -5,6 +5,7 @@
 #include <cstring>
 #include <string>
 
+#include "ClippingStore.h"
 #include "clippings/ClippingPreview.h"
 #include "clippings/SelectionGeometry.h"
 
@@ -184,4 +185,44 @@ TEST(SelectionGeometry, FirstButtonFollowsStartHandleUntilScreenEdge) {
   EXPECT_EQ(atRight.x + atRight.width, safe.x + safe.width);
   const Rect atLeft = selectionGeometry::actions(safe, 200, 48, 10, 260, 0);
   EXPECT_EQ(atLeft.x, safe.x);
+}
+
+TEST(SelectionGeometry, VerticalDragFindsTheNextLineAcrossWhitespace) {
+  const Rect first{20, 100, 80, 20};
+  const Rect nextLeft{20, 140, 20, 20};
+  const Rect nextRight{90, 140, 20, 20};
+  const Rect shortLastLine{20, 180, 20, 20};
+  // The same x lands in a gap on the next line and beyond the short last line.
+  EXPECT_TRUE(selectionGeometry::nearerWord(nextLeft, first, 50, 150));
+  EXPECT_FALSE(selectionGeometry::nearerWord(nextRight, nextLeft, 50, 150));
+  EXPECT_TRUE(selectionGeometry::nearerWord(shortLastLine, nextLeft, 50, 190));
+  EXPECT_TRUE(selectionGeometry::nearerWord(first, nextLeft, 50, 110));
+  // Keep a long word under the finger even when a neighbour's centre is closer.
+  EXPECT_FALSE(selectionGeometry::nearerWord(Rect{110, 100, 10, 20}, first, 99, 110));
+}
+
+TEST(ClippingHighlight, RemovalMatchesPortableAndLegacyHighlightBoundaries) {
+  Clipping clip;
+  clip.spineIndex = 2;
+  clip.startOffset = 100;
+  clip.endOffset = 200;
+  EXPECT_TRUE(clippingContainsWord(clip, 2, 99, 300, 42, 0, 95, 105));
+  EXPECT_TRUE(clippingContainsWord(clip, 2, 0, 1, 0, 0, 190, 210));
+  EXPECT_FALSE(clippingContainsWord(clip, 3, 0, 1, 0, 0, 100, 110));
+  EXPECT_FALSE(clippingContainsWord(clip, 2, 0, 1, 0, 0, 90, 100));
+  EXPECT_FALSE(clippingContainsWord(clip, 2, 0, 1, 0, 0, 200, 210));
+  EXPECT_FALSE(clippingContainsWord(clip, 2, 0, 1, 0, 0, UINT32_MAX, UINT32_MAX));
+  clip.startOffset = clip.endOffset = UINT32_MAX;
+  clip.startPage = 2;
+  clip.endPage = 3;
+  clip.startWordIndex = 4;
+  clip.endWordIndex = 6;
+  clip.pageCount = 10;
+  clip.layoutSignature = 42;
+  EXPECT_TRUE(clippingContainsWord(clip, 2, 2, 10, 42, 4, 0, 1));
+  EXPECT_TRUE(clippingContainsWord(clip, 2, 3, 10, 42, 6, 0, 1));
+  EXPECT_FALSE(clippingContainsWord(clip, 2, 2, 10, 42, 3, 0, 1));
+  EXPECT_FALSE(clippingContainsWord(clip, 2, 3, 10, 42, 7, 0, 1));
+  EXPECT_FALSE(clippingContainsWord(clip, 2, 2, 10, 43, 4, 0, 1));
+  EXPECT_FALSE(clippingContainsWord(clip, 2, 2, 11, 42, 4, 0, 1));
 }

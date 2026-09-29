@@ -1,15 +1,24 @@
 #pragma once
 
 #include <algorithm>
+#include <cstdlib>
+#include <utility>
 
 #include "components/themes/BaseTheme.h"
 
 namespace selectionGeometry {
+inline bool nearerWord(const Rect candidate, const Rect current, const int x, const int y) {
+  const auto distance = [x, y](const Rect word) {
+    return std::pair{std::abs(word.y + word.height / 2 - y), std::max({word.x - x, 0, x - (word.x + word.width)})};
+  };
+  return distance(candidate) < distance(current);
+}
+
 inline Rect actions(const Rect safe, const int textTop, const int height, const int gap, const int preferredWidth = 0,
                     const int anchorX = 0) {
   const int width = preferredWidth > 0 ? std::min(safe.width, preferredWidth) : safe.width;
-  return Rect{std::clamp(anchorX, safe.x, safe.x + safe.width - width),
-              std::max(safe.y, textTop - height - gap), width, height};
+  return Rect{std::clamp(anchorX, safe.x, safe.x + safe.width - width), std::max(safe.y, textTop - height - gap), width,
+              height};
 }
 
 inline int textOffset(const Rect actions, const int textTop, const int gap) {
