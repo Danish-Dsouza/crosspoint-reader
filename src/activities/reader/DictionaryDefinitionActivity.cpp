@@ -19,7 +19,7 @@ namespace {
 // Longest measurable/drawable span. Wrapped lines stay under the screen width
 // (far below this); only pathological unbreakable tokens are split at this cap.
 constexpr size_t MAX_LINE_BYTES = 191;
-constexpr float PLAIN_TEXT_LINE_SPACING = 1.2f;
+constexpr float PLAIN_TEXT_LINE_SPACING = 1.5f;
 
 // Styled-path ceiling: the laid-out Pages keep the whole definition resident
 // (TextBlock arenas ≈ text + ~7 bytes/word plus per-line objects), roughly
