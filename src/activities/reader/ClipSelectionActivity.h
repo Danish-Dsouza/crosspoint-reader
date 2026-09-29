@@ -57,8 +57,9 @@ class ClipSelectionActivity final : public Activity {
   Rect actionRect() const;
   int selectionTop() const;
   int textOffset() const;
+  int textXOffset() const;
   void cancel();
-  std::string buildSelectedText(int first, int last) const;
+  bool buildSelectedText(int first, int last, std::string& text) const;
   void drawSelection() const;
 
   std::vector<std::unique_ptr<Page>> pages;

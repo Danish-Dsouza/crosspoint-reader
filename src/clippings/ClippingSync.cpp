@@ -6,6 +6,7 @@
 #include <Logging.h>
 #include <Memory.h>
 #include <SecureHttpClient.h>
+#include <Utf8.h>
 
 #include <cstring>
 
@@ -119,6 +120,7 @@ bool decode(JsonObjectConst item, Clipping& clipping, std::string& text, bool& d
     if (clipping.startOffset >= clipping.endOffset || clipping.endOffset == UINT32_MAX) return false;
   }
   snprintf(clipping.chapterTitle, sizeof(clipping.chapterTitle), "%s", item["chapter"] | "");
+  clipping.chapterTitle[utf8SafeTruncateBuffer(clipping.chapterTitle, strlen(clipping.chapterTitle))] = '\0';
   text.assign(quote.c_str(), quote.size());
   clipping.textLength = static_cast<uint16_t>(text.size());
   return true;

@@ -527,3 +527,12 @@ Stable IDs are saved before upload. A sibling `.deleted` file stores fixed
 65-byte IDs awaiting server acknowledgement. Deletions are queued before the
 local record is removed and retried on the next enabled manual sync. A `.bak`
 file is recovered if power interrupted replacement of the main store.
+
+Clipping header strings are limited to 4 KiB on both reads and writes. A failed
+load leaves no usable index and disables writes until a successful load. The
+index is allocated with checked, bounded growth and released on unload.
+
+Book moves rename the store and its `.deleted` journal (plus recovery sidecars)
+together. The stored source path is informational and is refreshed on the next
+save; the current file path selects the store. Local book deletion cleans up all
+of these sidecars but preserves the independent `My Clippings.txt` export.

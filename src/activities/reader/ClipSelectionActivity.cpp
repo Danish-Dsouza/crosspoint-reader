@@ -8,7 +8,6 @@
 #include <Memory.h>
 
 #include <algorithm>
-#include <cctype>
 #include <climits>
 #include <cstdlib>
 
@@ -16,6 +15,7 @@
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
 #include "activities/ActivityResult.h"
+#include "clippings/ClippingText.h"
 #include "clippings/SelectionGeometry.h"
 #include "components/UIScale.h"
 #include "components/UITheme.h"
@@ -52,48 +52,6 @@ const char* cleanWordStart(const char* text) {
     text += static_cast<uint8_t>(text[0]) == 0xC2 ? 2 : 1;
   }
   return text;
-}
-
-size_t utf8SequenceLength(const uint8_t lead) {
-  if (lead < 0x80) return 1;
-  if (lead >= 0xC2 && lead <= 0xDF) return 2;
-  if (lead >= 0xE0 && lead <= 0xEF) return 3;
-  if (lead >= 0xF0 && lead <= 0xF4) return 4;
-  return 1;
-}
-
-void appendCleanWord(std::string& result, const char* text) {
-  text = cleanWordStart(text);
-  const size_t wordStart = result.size();
-  for (const auto* p = reinterpret_cast<const uint8_t*>(text); *p != 0;) {
-    if (*p == '\r' || *p == '\n' || *p == '\t') {
-      if (result.size() > wordStart && result.back() != ' ' && result.size() < CLIPPING_TEXT_MAX) {
-        result.push_back(' ');
-      }
-      ++p;
-      continue;
-    }
-    if (*p == 0xC2 && p[1] == 0xA0) {
-      if (result.size() > wordStart && result.back() != ' ' && result.size() < CLIPPING_TEXT_MAX) {
-        result.push_back(' ');
-      }
-      p += 2;
-      continue;
-    }
-    const size_t length = utf8SequenceLength(*p);
-    bool complete = true;
-    for (size_t i = 1; i < length; ++i) {
-      if (p[i] == 0 || (p[i] & 0xC0) != 0x80) {
-        complete = false;
-        break;
-      }
-    }
-    const size_t appendLength = complete ? length : 1;
-    if (result.size() + appendLength > CLIPPING_TEXT_MAX) break;
-    result.append(reinterpret_cast<const char*>(p), appendLength);
-    p += appendLength;
-  }
-  while (result.size() > wordStart && result.back() == ' ') result.pop_back();
 }
 
 }  // namespace
@@ -304,18 +262,21 @@ int ClipSelectionActivity::nextPageStartIndexForTouchDrag() const {
 
   const uint8_t currentPage = words[selected].pageOffset;
   for (int i = selected + 1; i < static_cast<int>(wordCount); ++i) {
-    if (words[i].pageOffset == currentPage) return -1;
-    return words[i].pageOffset > currentPage ? i : -1;
+    if (words[i].pageOffset > currentPage) return i;
   }
   return -1;
 }
 
 bool ClipSelectionActivity::isWithinCurrentPageEndDwellSlop(const int x, const int y) const {
   if (selected < 0 || selected >= static_cast<int>(wordCount)) return false;
+  const Rect safe = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
+  if (selectionGeometry::atBottomEdge(safe, lineHeight, x, y)) return true;
+  if (selected + 1 < static_cast<int>(wordCount) && words[selected + 1].pageOffset == currentPageOffset) return false;
   const WordBox& word = words[selected];
+  const int wordY = word.y + textOffset();
   return word.pageOffset == currentPageOffset && x >= word.x - TOUCH_PAGE_END_DWELL_SLOP_PX &&
-         x < word.x + word.width + TOUCH_PAGE_END_DWELL_SLOP_PX && y >= word.y - TOUCH_PAGE_END_DWELL_SLOP_PX &&
-         y < word.y + word.height + TOUCH_PAGE_END_DWELL_SLOP_PX;
+         x < word.x + word.width + TOUCH_PAGE_END_DWELL_SLOP_PX && y >= wordY - TOUCH_PAGE_END_DWELL_SLOP_PX &&
+         y < wordY + word.height + TOUCH_PAGE_END_DWELL_SLOP_PX;
 }
 
 void ClipSelectionActivity::moveVertical(const int direction) {
@@ -344,44 +305,25 @@ void ClipSelectionActivity::moveToPage(const int pageOffset) {
   }
 }
 
-std::string ClipSelectionActivity::buildSelectedText(const int first, const int last) const {
-  std::string text;
+bool ClipSelectionActivity::buildSelectedText(const int first, const int last, std::string& text) const {
+  text.clear();
   text.reserve(CLIPPING_TEXT_MAX);
   for (int i = first; i <= last; ++i) {
-    const char* word = cleanWordStart(words[i].text);
-    if (*word == '\0') continue;
-    const size_t checkpoint = text.size();
-    bool removedHyphen = false;
-    if (!text.empty()) {
+    const WordBox& current = words[i];
+    const char* word = cleanWordStart(current.text);
+    char separator = '\0';
+    if (i > first) {
       const WordBox& previous = words[i - 1];
-      if (text.back() == '-' && *word != '-' && std::isalnum(static_cast<unsigned char>(*word))) {
-        text.pop_back();
-        removedHyphen = true;
-      } else if (words[i].paragraphStart) {
-        if (text.size() == CLIPPING_TEXT_MAX) break;
-        text.push_back('\n');
-      } else {
-        const bool visuallyAttached =
-            words[i].row == previous.row && std::abs(words[i].x - (previous.x + previous.width)) <= 2;
-        if (!visuallyAttached) {
-          if (text.size() == CLIPPING_TEXT_MAX) break;
-          text.push_back(' ');
-        }
-      }
+      const bool sourceKnown = previous.endOffset != UINT32_MAX && current.startOffset != UINT32_MAX;
+      const bool separated = sourceKnown ? current.startOffset > previous.endOffset
+                                         : current.row != previous.row || current.x > previous.x + previous.width + 2;
+      if (separated) separator = current.paragraphStart ? '\n' : ' ';
     }
-    const size_t wordStart = text.size();
-    appendCleanWord(text, word);
-    if (text.size() == wordStart) {
-      if (removedHyphen) {
-        text.push_back('-');
-      } else {
-        text.resize(checkpoint);
-      }
-      break;
+    if (!clippingText::append(text, word, current.startOffset, current.endOffset, separator, CLIPPING_TEXT_MAX)) {
+      return false;
     }
-    if (text.size() == CLIPPING_TEXT_MAX) break;
   }
-  return text;
+  return true;
 }
 
 void ClipSelectionActivity::confirmSelection(const ClippingResult::Action action) {
@@ -395,7 +337,12 @@ void ClipSelectionActivity::confirmSelection(const ClippingResult::Action action
   const int last = std::max(rangeStart, selected);
   ClippingResult result;
   result.action = action;
-  result.text = buildSelectedText(first, last);
+  if (!buildSelectedText(first, last, result.text)) {
+    static constexpr StrId OPTIONS[] = {StrId::STR_BACK};
+    actionPopup.show(StrId::STR_CLIPPING_TOO_LONG, OPTIONS, 1, 0, [](int) {});
+    requestUpdate();
+    return;
+  }
   result.startPageOffset = words[first].pageOffset;
   result.endPageOffset = words[last].pageOffset;
   result.startWordIndex = words[first].pageWordIndex;
@@ -473,24 +420,21 @@ void ClipSelectionActivity::loop() {
 
       const int hit = dragWordAt(touchX + dragOffsetX, touchY + dragOffsetY);
       if (hit >= 0) {
-        const int previousOffset = textOffset();
         selectIndex(hit);
-        dragOffsetY += textOffset() - previousOffset;
       }
 
-      // A drag ends normally when released on the final word. Holding there
-      // for a moment is the explicit request to carry the range onto the
-      // next preloaded page.
+      // Hold at the bottom edge or on the final word to extend onto the next page.
       const int nextPageStart = nextPageStartIndexForTouchDrag();
-      if (nextPageStart >= 0 &&
-          isWithinCurrentPageEndDwellSlop(touchX + dragOffsetX, touchY + dragOffsetY - textOffset())) {
+      if (nextPageStart >= 0 && (isWithinCurrentPageEndDwellSlop(touchX, touchY) ||
+                                 isWithinCurrentPageEndDwellSlop(touchX + dragOffsetX, touchY + dragOffsetY))) {
         const unsigned long now = millis();
-        if (touchDragPageEndIndex != selected) {
-          touchDragPageEndIndex = selected;
+        if (touchDragPageEndIndex != nextPageStart) {
+          touchDragPageEndIndex = nextPageStart;
           touchDragPageEndHeldSince = now;
         } else if (now - touchDragPageEndHeldSince >= TOUCH_PAGE_ADVANCE_HOLD_MS) {
           touchDragPageEndIndex = -1;
           selectIndex(nextPageStart);
+          dragOffsetX = dragOffsetY = 0;
         }
       } else {
         touchDragPageEndIndex = -1;
@@ -531,10 +475,9 @@ void ClipSelectionActivity::loop() {
     }
     const int hit = wordAt(touchX, touchY);
     if (hit >= 0) {
-      const int previousOffset = textOffset();
       selected = rangeStart = hit;
       dragOffsetX = 0;
-      dragOffsetY = textOffset() - previousOffset;
+      dragOffsetY = 0;
       touchDragSelecting = true;
       touchDragHasMoved = false;
       touchDragStartX = touchX;
@@ -617,8 +560,16 @@ int ClipSelectionActivity::selectionTop() const {
 }
 
 Rect ClipSelectionActivity::actionRect() const {
-  const Rect safe = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
+  Rect safe = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
   const auto& metrics = UITheme::getInstance().getMetrics();
+  int top, right, bottom, left;
+  renderer.getOrientedViewableTRBL(&top, &right, &bottom, &left);
+  const int rightEdge = std::min(safe.x + safe.width, renderer.getScreenWidth() - right);
+  const int bottomEdge = std::min(safe.y + safe.height, renderer.getScreenHeight() - bottom);
+  safe.x = std::max(safe.x, left);
+  safe.y = std::max(safe.y, top) + std::max(metrics.topPadding, metrics.verticalSpacing);
+  safe.width = rightEdge - safe.x;
+  safe.height = bottomEdge - safe.y;
   const int font = uiScaleSpec().smallFontId;
   const int labelWidth =
       std::max({renderer.getTextWidth(font, tr(STR_LOOKUP)), renderer.getTextWidth(font, tr(STR_CLIP)),
@@ -635,13 +586,24 @@ Rect ClipSelectionActivity::actionRect() const {
 }
 
 int ClipSelectionActivity::textOffset() const {
-  if (rangeStart < 0 || !mappedInput.hasTouch()) return 0;
-  return selectionGeometry::textOffset(actionRect(), selectionTop(),
-                                       UITheme::getInstance().getMetrics().verticalSpacing);
+  if (!mappedInput.hasTouch() && wordCount) {
+    const Rect safe = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
+    const WordBox& cursor = words[selected];
+    return selectionGeometry::keepVisible(cursor.y, cursor.height, safe.y, safe.height);
+  }
+  return 0;
+}
+
+int ClipSelectionActivity::textXOffset() const {
+  if (mappedInput.hasTouch() || !wordCount) return 0;
+  const Rect safe = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
+  const WordBox& cursor = words[selected];
+  return selectionGeometry::keepVisible(cursor.x, cursor.width, safe.x, safe.width);
 }
 
 void ClipSelectionActivity::drawSelection() const {
   const int offset = textOffset();
+  const int offsetX = textXOffset();
   const int first = rangeStart < 0 ? selected : std::min(rangeStart, selected);
   const int last = rangeStart < 0 ? selected : std::max(rangeStart, selected);
   const WordBox* previous = nullptr;
@@ -652,13 +614,15 @@ void ClipSelectionActivity::drawSelection() const {
       const int previousRight = previous->x + previous->width;
       const int wordRight = word.x + word.width;
       if (previousRight < word.x) {
-        renderer.fillRectDither(previousRight, word.y + offset, word.x - previousRight, word.height, Color::LightGray);
+        renderer.fillRectDither(previousRight + offsetX, word.y + offset, word.x - previousRight, word.height,
+                                Color::LightGray);
       } else if (wordRight < previous->x) {
-        renderer.fillRectDither(wordRight, word.y + offset, previous->x - wordRight, word.height, Color::LightGray);
+        renderer.fillRectDither(wordRight + offsetX, word.y + offset, previous->x - wordRight, word.height,
+                                Color::LightGray);
       }
     }
-    renderer.fillRectDither(word.x, word.y + offset, word.width, word.height, Color::LightGray);
-    renderer.drawText(fontId, word.x, word.y + offset, word.text, true, word.style);
+    renderer.fillRectDither(word.x + offsetX, word.y + offset, word.width, word.height, Color::LightGray);
+    renderer.drawText(fontId, word.x + offsetX, word.y + offset, word.text, true, word.style);
     previous = &word;
   }
   if (rangeStart >= 0 && mappedInput.hasTouch()) {
@@ -667,20 +631,25 @@ void ClipSelectionActivity::drawSelection() const {
     if (!touchDragSelecting) GUI.drawSelectionActions(renderer, actionRect());
   } else {
     const WordBox& cursor = words[selected];
-    renderer.drawRect(cursor.x, cursor.y + offset, cursor.width, cursor.height, true);
+    renderer.drawRect(cursor.x + offsetX, cursor.y + offset, cursor.width, cursor.height, true);
   }
 }
 
 void ClipSelectionActivity::render(RenderLock&&) {
   if (actionPopup.processRender(renderer, mappedInput)) return;
   const int offset = textOffset();
+  const int offsetX = textXOffset();
   renderer.clearScreen();
+  const auto clip = renderer.getClipRect();
+  const Rect safe = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
+  renderer.setClipRect(safe.x, safe.y, safe.width, safe.height);
   auto* fcm = renderer.getFontCacheManager();
   auto scope = fcm->createPrewarmScope();
-  pages[currentPageOffset]->render(renderer, fontId, marginLeft, marginTop + offset);
+  pages[currentPageOffset]->render(renderer, fontId, marginLeft + offsetX, marginTop + offset);
   scope.endScanAndPrewarm();
-  pages[currentPageOffset]->render(renderer, fontId, marginLeft, marginTop + offset);
+  pages[currentPageOffset]->render(renderer, fontId, marginLeft + offsetX, marginTop + offset);
   if (wordCount != 0) drawSelection();
+  renderer.setClipRect(clip[0], clip[1], clip[2], clip[3]);
 
   const auto labels =
       mappedInput.mapLabels(tr(STR_BACK), rangeStart < 0 || !mappedInput.hasTouch() ? tr(STR_SELECT) : tr(STR_DONE),

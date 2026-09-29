@@ -36,6 +36,8 @@ inline uint32_t readerRenderSpecSignature(const ReaderRenderSpec& spec) {
   mix(static_cast<uint32_t>(spec.fontId));
   mix(static_cast<uint32_t>(spec.lineCompression * 1000.0f));
   mix(spec.extraParagraphSpacing);
+  mix(static_cast<uint8_t>(spec.characterSpacing));
+  mix(spec.wordSpacingPercent);
   mix(spec.paragraphAlignment);
   mix(spec.viewportWidth);
   mix(spec.viewportHeight);

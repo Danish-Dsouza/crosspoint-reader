@@ -69,6 +69,30 @@ void EpubReaderClippingListActivity::refreshRowWindow(const int start) {
 }
 
 void EpubReaderClippingListActivity::openSelected() {
+  if (confirmPopup.isActive() || nav.selected < 0 || nav.selected >= listCount()) return;
+  const Clipping* clipping = CLIPPINGS.clippingAt(static_cast<size_t>(nav.selected));
+  if (!clipping) return;
+  static constexpr StrId OPTIONS[] = {StrId::STR_OPEN, StrId::STR_GO_TO_PASSAGE};
+  const bool anchored = clipping->startOffset != UINT32_MAX && clipping->endOffset != UINT32_MAX;
+  confirmPopup.show(StrId::STR_CLIPPINGS, OPTIONS, anchored ? 2 : 1, 0, [this](const int index) {
+    if (index == 0) {
+      readSelected();
+      return;
+    }
+    const Clipping* selectedClipping = CLIPPINGS.clippingAt(static_cast<size_t>(nav.selected));
+    if (!selectedClipping) return;
+    ProgressChangeResult result;
+    result.spineIndex = selectedClipping->spineIndex;
+    result.page = selectedClipping->startPage;
+    result.hasVisibleTextOffset = true;
+    result.visibleTextOffset = selectedClipping->startOffset;
+    setResult(std::move(result));
+    finish();
+  });
+  requestUpdate();
+}
+
+void EpubReaderClippingListActivity::readSelected() {
   if (nav.selected < 0 || nav.selected >= listCount()) return;
   const Clipping* clipping = CLIPPINGS.clippingAt(static_cast<size_t>(nav.selected));
   std::string text;
@@ -173,7 +197,7 @@ void EpubReaderClippingListActivity::buildScreen(UiScreen& screen) {
   props.count = static_cast<uint16_t>(listCount());
   props.action = ACTION_ROW;
   props.inputMask = fui::InputTouch | fui::InputLongPress;
-  syncListViewport(screen, props, /*hasSubtitle=*/true);
+  syncListViewport(screen, props);
   refreshRowWindow(nav.top);
   props.items = rowItems.data();
   props.itemsWindowFirst = static_cast<uint16_t>(windowStart);

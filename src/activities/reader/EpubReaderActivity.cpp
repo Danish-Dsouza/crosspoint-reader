@@ -161,21 +161,12 @@ std::string buildReadFolderDestination(const std::string& srcPath) {
 }
 
 void moveFinishedBookToReadFolder(const std::string& srcPath, const std::string& dstPath,
-                                  const std::string& oldCachePath, const std::string& title,
-                                  const std::string& author) {
+                                  const std::string& oldCachePath) {
   LOG_INF("ERS", "Moving finished epub: %s -> %s", srcPath.c_str(), dstPath.c_str());
-  const bool hasClippings = ClippingStore::hasForFilePath(srcPath, "epub");
-  if (hasClippings && !ClippingStore::migrateForFilePath(srcPath, dstPath, title, author, "epub", true)) {
-    LOG_ERR("CLIP", "Failed to prepare clippings before moving book to read folder");
+  if (!ClippingStore::moveBook(srcPath, dstPath)) {
+    LOG_ERR("ERS", "Failed to move finished book and clippings to '/Read' folder");
     return;
   }
-
-  if (!Storage.rename(srcPath.c_str(), dstPath.c_str())) {
-    LOG_ERR("ERS", "Failed to move finished book to '/Read' folder");
-    if (hasClippings) ClippingStore::deleteForFilePath(dstPath, "epub");
-    return;
-  }
-  if (hasClippings) ClippingStore::deleteForFilePath(srcPath, "epub");
 
   const std::string newCachePath = "/.crosspoint/epub_" + std::to_string(std::hash<std::string>{}(dstPath));
   bool cacheMoved = false;
@@ -212,11 +203,9 @@ EpubReaderActivity::~EpubReaderActivity() {
   if (pendingReadFolderMove && epub) {
     const std::string srcPath = epub->getPath();
     const std::string oldCachePath = epub->getCachePath();
-    const std::string title = epub->getTitle();
-    const std::string author = epub->getAuthor();
     const std::string dstPath = buildReadFolderDestination(srcPath);
     epub.reset();
-    moveFinishedBookToReadFolder(srcPath, dstPath, oldCachePath, title, author);
+    moveFinishedBookToReadFolder(srcPath, dstPath, oldCachePath);
   } else {
     epub.reset();
   }
@@ -484,19 +473,16 @@ void EpubReaderActivity::startClipSelection(const int initialX, const int initia
     }
     const uint16_t paragraphIndex =
         section ? section->getParagraphIndexForPage(startPage).value_or(UINT16_MAX) : UINT16_MAX;
-    const size_t clippingIndex = CLIPPINGS.clippingCount();
     const auto addResult = CLIPPINGS.addClipping(
         spineIndex, startPage, endPage, pageCount, clipping.startWordIndex, clipping.endWordIndex, clipping.wordCount,
         chapterTitle.c_str(), paragraphIndex, clipping.text, layoutSignature, clipping.startOffset, clipping.endOffset);
     bool exported = false;
     if (addResult == ClippingStore::AddResult::Added) {
       exported = ClippingsManager::saveClipping(bookTitle, author, chapterTitle, startPage + 1, clipping.text);
-      if (!exported && !CLIPPINGS.removeClippingAt(clippingIndex)) {
-        LOG_ERR("CLIP", "Failed to roll back clipping after export failure");
-      }
     }
     clippingMessage = addResult == ClippingStore::AddResult::LimitReached ? StrId::STR_CLIPPING_LIMIT_REACHED
                       : exported                                          ? StrId::STR_CLIPPING_SAVED
+                      : addResult == ClippingStore::AddResult::Added      ? StrId::STR_CLIPPING_EXPORT_FAILED
                                                                           : StrId::STR_CLIPPING_FAILED;
     showClippingMessage = true;
     clippingMessageTime = millis();
@@ -545,8 +531,20 @@ void EpubReaderActivity::openClippings() {
     requestUpdate();
     return;
   }
-  startActivityForResult(std::make_unique<EpubReaderClippingListActivity>(renderer, mappedInput),
-                         [this](const ActivityResult&) { requestUpdate(); });
+  auto list = makeUniqueNoThrow<EpubReaderClippingListActivity>(renderer, mappedInput);
+  if (!list) {
+    LOG_ERR("CLIP", "OOM: clipping list");
+    return;
+  }
+  startActivityForResult(std::move(list), [this](const ActivityResult& result) {
+    if (!result.isCancelled) {
+      if (const auto* progress = std::get_if<ProgressChangeResult>(&result.data)) {
+        applyProgressChange(*progress);
+        return;
+      }
+    }
+    requestUpdate();
+  });
 }
 
 void EpubReaderActivity::loop() {
@@ -956,6 +954,56 @@ void EpubReaderActivity::jumpToPercent(int percent) {
   requestUpdate();
 }
 
+void EpubReaderActivity::applyProgressChange(const ProgressChangeResult& sync) {
+  if (sync.hasVisibleTextOffset && sync.spineIndex >= 0 && sync.spineIndex < epub->getSpineItemsCount()) {
+    RenderLock lock;
+    clearDeferredReposition();
+    const auto page = section && currentSpineIndex == sync.spineIndex
+                          ? section->getPageForVisibleTextOffset(sync.visibleTextOffset)
+                          : std::nullopt;
+    if (page) {
+      section->currentPage = *page;
+    } else {
+      currentSpineIndex = sync.spineIndex;
+      pendingOffsetJump = sync.visibleTextOffset;
+      nextPageNumber = std::max(0, sync.page);
+      section.reset();
+    }
+    requestUpdate();
+    return;
+  }
+
+  int targetSpineIndex = sync.spineIndex;
+  int targetPage = sync.page;
+  const int activeTotalPages = section ? section->estimatedTotalPages() : 0;
+  const bool cachedPageMatchesActiveSection = section && sync.totalPages > 0 && currentSpineIndex == sync.spineIndex &&
+                                              sync.page >= 0 && sync.page < sync.totalPages &&
+                                              activeTotalPages == sync.totalPages;
+
+  if (!cachedPageMatchesActiveSection && sync.hasSavedProgress) {
+    const int totalPages = section ? section->estimatedTotalPages() : cachedChapterTotalPageCount;
+    CrossPointPosition fallback =
+        ProgressMapper::toCrossPoint(epub, {sync.xpath, sync.percentage}, renderer, currentSpineIndex, totalPages);
+    targetSpineIndex = fallback.spineIndex;
+    targetPage = fallback.pageNumber;
+  }
+
+  RenderLock lock;
+  clearDeferredReposition();
+
+  if (currentSpineIndex != targetSpineIndex) {
+    currentSpineIndex = targetSpineIndex;
+    nextPageNumber = targetPage;
+    section.reset();
+  } else if (section && section->currentPage != targetPage) {
+    const int clampedTargetPage = std::max(0, targetPage);
+    section->currentPage = clampedTargetPage;
+  } else if (!section) {
+    nextPageNumber = targetPage;
+  }
+  requestUpdate();
+}
+
 void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction action) {
   auto progressChangeResultHandler = [this](const ActivityResult& result) {
     loadCachedBookmarks();
@@ -964,51 +1012,7 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
     } else {
       const auto& sync = std::get<ProgressChangeResult>(result.data);
 
-      if (sync.hasVisibleTextOffset && sync.spineIndex >= 0 && sync.spineIndex < epub->getSpineItemsCount()) {
-        RenderLock lock;
-        clearDeferredReposition();
-        if (section && currentSpineIndex == sync.spineIndex) {
-          const auto page = section->getPageForVisibleTextOffset(sync.visibleTextOffset);
-          section->currentPage = page.value_or(std::max(0, sync.page));
-        } else {
-          currentSpineIndex = sync.spineIndex;
-          pendingOffsetJump = sync.visibleTextOffset;
-          nextPageNumber = std::max(0, sync.page);
-          section.reset();
-        }
-        requestUpdate();
-        return;
-      }
-
-      int targetSpineIndex = sync.spineIndex;
-      int targetPage = sync.page;
-      const int activeTotalPages = section ? section->estimatedTotalPages() : 0;
-      const bool cachedPageMatchesActiveSection = section && sync.totalPages > 0 &&
-                                                  currentSpineIndex == sync.spineIndex && sync.page >= 0 &&
-                                                  sync.page < sync.totalPages && activeTotalPages == sync.totalPages;
-
-      if (!cachedPageMatchesActiveSection && sync.hasSavedProgress) {
-        const int totalPages = section ? section->estimatedTotalPages() : cachedChapterTotalPageCount;
-        CrossPointPosition fallback =
-            ProgressMapper::toCrossPoint(epub, {sync.xpath, sync.percentage}, renderer, currentSpineIndex, totalPages);
-        targetSpineIndex = fallback.spineIndex;
-        targetPage = fallback.pageNumber;
-      }
-
-      RenderLock lock;
-      clearDeferredReposition();
-
-      if (currentSpineIndex != targetSpineIndex) {
-        currentSpineIndex = targetSpineIndex;
-        nextPageNumber = targetPage;
-        section.reset();
-      } else if (section && section->currentPage != targetPage) {
-        const int clampedTargetPage = std::max(0, targetPage);
-        section->currentPage = clampedTargetPage;
-      } else if (!section) {
-        nextPageNumber = targetPage;
-      }
-      requestUpdate();
+      applyProgressChange(sync);
     }
   };
 

@@ -17,6 +17,7 @@ class EpubReaderClippingListActivity final : public UiListActivity {
   void rebuildRows();
   void refreshRowWindow(int start);
   void openSelected();
+  void readSelected();
   void showDeleteConfirmation();
   void deleteSelected();
 

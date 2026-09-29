@@ -535,3 +535,7 @@ STR_SPACING_175_PERCENT: "175%"
 STR_SPACING_200_PERCENT: "200%"
 
 STR_CLIP: "Clip"
+
+STR_CLIPPING_TOO_LONG: "Selection Too Long — Select Less Text"
+STR_CLIPPING_EXPORT_FAILED: "Clipping Saved — Text Export Failed"
+STR_GO_TO_PASSAGE: "Go to Passage"

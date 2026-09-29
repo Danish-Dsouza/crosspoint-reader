@@ -45,7 +45,7 @@ void DictionaryDefinitionActivity::onEnter() {
   }
   if (plainTextReason) {
     LOG_INF("DICT", "Plain-text definition: %s (bytes=%u)", plainTextReason, static_cast<unsigned>(definition.size()));
-    definition = htmlToPlainText(definition);
+    if (htmlDefinition) definition = htmlToPlainText(definition);
     wrapText();
   } else {
     LOG_INF("DICT", "Styled definition: %u pages", static_cast<unsigned>(pages.size()));

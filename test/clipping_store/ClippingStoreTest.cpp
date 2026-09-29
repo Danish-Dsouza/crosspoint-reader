@@ -1,0 +1,153 @@
+#include <ClippingStore.h>
+#include <HalStorage.h>
+#include <gtest/gtest.h>
+
+namespace {
+using Result = ClippingStore::AddResult;
+Result add(ClippingStore& store, const std::string& text = "one", const char* title = "Chapter") {
+  return store.addClipping(0, 0, 0, 1, 0, 0, 1, title, 0, text, 1, 0, 3);
+}
+std::string storePath() {
+  for (const auto& [path, node] : fake::files)
+    if (path.ends_with(".bin")) return path;
+  return "";
+}
+}  // namespace
+
+TEST(ClippingStore, FailedLoadCannotPublishOrOverwriteValidPrefix) {
+  fake::reset();
+  ClippingStore store;
+  ASSERT_TRUE(store.loadForBook("/book.epub", "Book", "Author", "epub"));
+  ASSERT_EQ(add(store), Result::Added);
+  ASSERT_EQ(add(store, "two"), Result::Added);
+  store.unload();
+  auto& bytes = fake::files.at(storePath())->bytes;
+  bytes.pop_back();
+  const auto damaged = bytes;
+  EXPECT_FALSE(store.loadForBook("/book.epub", "Book", "Author", "epub"));
+  EXPECT_EQ(store.clippingCount(), 0u);
+  EXPECT_EQ(add(store), Result::SaveFailed);
+  EXPECT_FALSE(store.saveToFile());
+  EXPECT_FALSE(store.prepareSync());
+  store.unload();
+  EXPECT_EQ(bytes, damaged);
+  ASSERT_TRUE(store.loadForBook("/other.epub", "Other", "", "epub"));
+  ASSERT_EQ(add(store), Result::Added);
+  EXPECT_FALSE(store.loadForBook("/bad.txt", "", "", "unsupported"));
+  EXPECT_EQ(store.clippingCount(), 0u);
+  EXPECT_EQ(add(store), Result::SaveFailed);
+}
+
+TEST(ClippingStore, AllocationFailureKeepsOldIndexAndUnloadReleasesIt) {
+  fake::reset();
+  ClippingStore store;
+  ASSERT_TRUE(store.loadForBook("/book.epub", "Book", "Author", "epub"));
+  for (int i = 0; i < 4; ++i) ASSERT_EQ(add(store), Result::Added);
+  fake::failAlloc = 0;
+  EXPECT_EQ(add(store), Result::SaveFailed);
+  EXPECT_EQ(store.clippingCount(), 4u);
+  std::string text;
+  EXPECT_TRUE(store.readClippingText(3, text));
+  EXPECT_EQ(text, "one");
+  store.unload();
+  EXPECT_EQ(store.getClippings().data(), nullptr);
+  EXPECT_TRUE(store.loadForBook("/book.epub", "Book", "Author", "epub"));
+  EXPECT_EQ(store.clippingCount(), 4u);
+}
+
+TEST(ClippingStore, CountLimitAndHeaderLimitsRoundTrip) {
+  fake::reset();
+  ClippingStore store;
+  ASSERT_TRUE(store.loadForBook("/book.epub", "Book", "Author", "epub"));
+  for (unsigned i = 0; i < CLIPPING_MAX_PER_BOOK - 1; ++i) ASSERT_EQ(add(store), Result::Added);
+  store.unload();
+  ASSERT_TRUE(store.loadForBook("/book.epub", "Book", "Author", "epub"));
+  EXPECT_EQ(add(store), Result::Added);
+  EXPECT_EQ(add(store), Result::LimitReached);
+  store.unload();
+  ASSERT_TRUE(store.loadForBook("/book.epub", "Book", "Author", "epub"));
+  EXPECT_EQ(store.clippingCount(), CLIPPING_MAX_PER_BOOK);
+  const auto original = fake::files.at(storePath())->bytes;
+  store.unload();
+  ASSERT_TRUE(store.loadForBook("/book.epub", std::string(4097, 'x'), "Author", "epub"));
+  EXPECT_FALSE(store.removeClippingAt(0));
+  store.unload();
+  EXPECT_EQ(fake::files.at(storePath())->bytes, original);
+}
+
+TEST(ClippingStore, Utf8TitleAndFailedDeletionPreserveRecord) {
+  fake::reset();
+  ClippingStore store;
+  ASSERT_TRUE(store.loadForBook("/book.epub", "Book", "Author", "epub"));
+  ASSERT_EQ(add(store, "one", (std::string(46, 'x') + "가").c_str()), Result::Added);
+  EXPECT_EQ(std::string(store.clippingAt(0)->chapterTitle), std::string(46, 'x'));
+  fake::failWrite = 0;
+  EXPECT_FALSE(store.removeClippingAt(0));
+  ASSERT_EQ(store.clippingCount(), 1u);
+  std::string text;
+  EXPECT_TRUE(store.readClippingText(0, text));
+  EXPECT_EQ(text, "one");
+}
+
+TEST(ClippingStore, MovesFolderWithClipsAndDeletionJournalAndRollsBackFailure) {
+  for (const int failure : {-1, 0, 1, 2, 3}) {
+    fake::reset();
+    fake::add("/books/sub/book.epub");
+    ClippingStore store;
+    ASSERT_TRUE(store.loadForBook("/books/sub/book.epub", "Book", "Author", "epub"));
+    ASSERT_EQ(add(store), Result::Added);
+    ASSERT_EQ(add(store, "two"), Result::Added);
+    ASSERT_TRUE(store.prepareSync());
+    ASSERT_TRUE(store.removeClippingAt(0));
+    store.unload();
+    const auto oldStore = storePath();
+    const auto original = fake::files.at(oldStore)->bytes;
+    const auto deleted = fake::files.at(oldStore + ".deleted")->bytes;
+    fake::failRename = failure;
+    const bool moved = ClippingStore::moveBook("/books", "/renamed");
+    if (moved) {
+      EXPECT_FALSE(Storage.exists("/books/sub/book.epub"));
+      EXPECT_TRUE(Storage.exists("/renamed/sub/book.epub"));
+      EXPECT_FALSE(Storage.exists(oldStore.c_str()));
+      ASSERT_TRUE(store.loadForBook("/renamed/sub/book.epub", "", "", "epub"));
+      EXPECT_EQ(store.clippingCount(), 1u);
+      std::string text;
+      EXPECT_TRUE(store.readClippingText(0, text));
+      EXPECT_EQ(text, "two");
+      uint32_t offset = 0;
+      char id[65];
+      EXPECT_TRUE(store.nextDeletion(offset, id));
+      EXPECT_NE(id[0], 0);
+    } else {
+      EXPECT_TRUE(Storage.exists("/books/sub/book.epub"));
+      EXPECT_FALSE(Storage.exists("/renamed/sub/book.epub"));
+      EXPECT_EQ(fake::files.at(oldStore)->bytes, original);
+      EXPECT_EQ(fake::files.at(oldStore + ".deleted")->bytes, deleted);
+    }
+  }
+}
+
+TEST(ClippingStore, MoveRefusesExistingDestinationHistoryAndDeleteCleansSidecars) {
+  fake::reset();
+  fake::add("/one.epub");
+  ClippingStore store;
+  ASSERT_TRUE(store.loadForBook("/one.epub", "One", "", "epub"));
+  ASSERT_EQ(add(store), Result::Added);
+  store.unload();
+  ASSERT_TRUE(store.loadForBook("/two.epub", "Two", "", "epub"));
+  ASSERT_EQ(add(store, "two"), Result::Added);
+  store.unload();
+  EXPECT_FALSE(ClippingStore::moveBook("/one.epub", "/two.epub"));
+  EXPECT_TRUE(Storage.exists("/one.epub"));
+  EXPECT_TRUE(ClippingStore::deleteForFilePath("/two.epub", "epub"));
+  EXPECT_TRUE(ClippingStore::moveBook("/one.epub", "/two.epub"));
+  const auto path = storePath();
+  fake::add(path + ".deleted", std::string(65, 'x'));
+  fake::add(path + ".bak");
+  fake::add(path + ".tmp");
+  EXPECT_TRUE(ClippingStore::deleteForFilePath("/two.epub", "epub"));
+  EXPECT_FALSE(Storage.exists(path.c_str()));
+  EXPECT_FALSE(Storage.exists((path + ".deleted").c_str()));
+  EXPECT_FALSE(Storage.exists((path + ".bak").c_str()));
+  EXPECT_FALSE(Storage.exists((path + ".tmp").c_str()));
+}

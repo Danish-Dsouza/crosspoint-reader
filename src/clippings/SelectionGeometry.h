@@ -7,6 +7,14 @@
 #include "components/themes/BaseTheme.h"
 
 namespace selectionGeometry {
+inline int keepVisible(const int position, const int extent, const int start, const int size) {
+  return position < start ? start - position : std::min(0, start + size - position - extent);
+}
+
+inline bool atBottomEdge(const Rect safe, const int lineHeight, const int x, const int y) {
+  return x >= safe.x && x < safe.x + safe.width && y >= safe.y + safe.height - lineHeight;
+}
+
 inline bool nearerWord(const Rect candidate, const Rect current, const int x, const int y) {
   const auto distance = [x, y](const Rect word) {
     return std::pair{std::abs(word.y + word.height / 2 - y), std::max({word.x - x, 0, x - (word.x + word.width)})};
@@ -19,10 +27,6 @@ inline Rect actions(const Rect safe, const int textTop, const int height, const 
   const int width = preferredWidth > 0 ? std::min(safe.width, preferredWidth) : safe.width;
   return Rect{std::clamp(anchorX, safe.x, safe.x + safe.width - width), std::max(safe.y, textTop - height - gap), width,
               height};
-}
-
-inline int textOffset(const Rect actions, const int textTop, const int gap) {
-  return std::max(0, actions.y + actions.height + gap - textTop);
 }
 
 inline Rect button(const Rect actions, const int index, const int padding) {

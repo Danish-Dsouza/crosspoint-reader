@@ -170,6 +170,7 @@ class EpubReaderActivity final : public ReaderActivity {
   void startClipSelection(int initialX = -1, int initialY = -1);
   int clippingAtPoint(const Page& page, int x, int y) const;
   void openClippings();
+  void applyProgressChange(const ProgressChangeResult& progress);
   bool launchKOReaderSync();
   unsigned long confirmLongPressThreshold() const;
   void toggleAutoPageTurn(uint8_t selectedPageTurnOption);

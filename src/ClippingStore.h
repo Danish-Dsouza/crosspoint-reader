@@ -2,8 +2,9 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
+#include <span>
 #include <string>
-#include <vector>
 
 #if defined(ARDUINO_ARCH_ESP32)
 #include <sdkconfig.h>
@@ -67,34 +68,34 @@ class ClippingStore {
   bool nextDeletion(uint32_t& offset, char (&id)[65]) const;
   bool finishDeletions();
 
-  bool hasClippings() const { return !clippings.empty(); }
-  size_t clippingCount() const { return clippings.size(); }
+  bool hasClippings() const { return clippingSize != 0; }
+  size_t clippingCount() const { return clippingSize; }
   const Clipping* clippingAt(size_t index) const;
-  const std::vector<Clipping>& getClippings() const { return clippings; }
+  std::span<const Clipping> getClippings() const { return {clippings.get(), clippingSize}; }
   bool readClippingPreview(size_t index, char* out, size_t outSize, size_t& outLength) const;
   bool readClippingText(size_t index, std::string& out) const;
   bool readClippingText(const Clipping& clipping, std::string& out) const;
 
-  static bool hasForFilePath(const std::string& filePath, const std::string& bookType);
-  static void deleteForFilePath(const std::string& filePath, const std::string& bookType);
-  static bool migrateForFilePath(const std::string& oldFilePath, const std::string& newFilePath,
-                                 const std::string& title, const std::string& author, const std::string& bookType,
-                                 bool preserveSource = false);
+  static bool deleteForFilePath(const std::string& filePath, const std::string& bookType);
+  // Move a book or folder together with its clipping stores and deletion journals.
+  static bool moveBook(const std::string& from, const std::string& to);
 
  private:
   static ClippingStore instance;
 
-  std::vector<Clipping> clippings;
+  std::unique_ptr<Clipping[]> clippings;
+  size_t clippingSize = 0;
+  size_t clippingCapacity = 0;
+  bool loaded = false;
   std::string bookFilePath;
   std::string bookTitle;
   std::string bookAuthor;
   std::string storeFilePath;
   bool dirty = false;
 
+  bool reserveClippings(size_t count);
   bool readFromFile();
-  bool readFromFile(const std::string& path, std::vector<Clipping>& out);
-  bool writeToFile(const std::string* replacementText = nullptr, size_t replacementIndex = SIZE_MAX,
-                   const std::string* textSourcePath = nullptr);
+  bool writeToFile(const std::string* replacementText = nullptr, size_t replacementIndex = SIZE_MAX);
 };
 
 inline bool clippingStoredRangeMatchesLayout(const Clipping& clipping, const uint16_t currentPageCount,

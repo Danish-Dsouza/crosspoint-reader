@@ -1,3 +1,4 @@
+#include <Epub/ReaderRenderSpec.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -7,6 +8,7 @@
 
 #include "ClippingStore.h"
 #include "clippings/ClippingPreview.h"
+#include "clippings/ClippingText.h"
 #include "clippings/SelectionGeometry.h"
 
 namespace {
@@ -152,17 +154,18 @@ TEST(ClippingPreview, InternalWhitespaceStillCountsAgainstReadBudget) {
   EXPECT_LE(reader.pos, 320u);
 }
 
-TEST(SelectionGeometry, ToolbarStaysAboveTextAndInsideEveryOrientedSafeArea) {
+TEST(SelectionGeometry, ToolbarOverlaysAtTopAndStaysInsideEveryOrientedSafeArea) {
   for (const Rect safe :
        {Rect{12, 20, 456, 744}, Rect{20, 12, 744, 456}, Rect{8, 32, 456, 744}, Rect{32, 8, 744, 456}}) {
     for (const int top : {safe.y, safe.y + 40, safe.y + safe.height / 2, safe.y + safe.height - 80}) {
       const Rect actions = selectionGeometry::actions(safe, top, 64, 10);
-      const int offset = selectionGeometry::textOffset(actions, top, 10);
       EXPECT_GE(actions.y, safe.y);
-      EXPECT_LE(actions.y + actions.height, top + offset);
       EXPECT_LE(actions.x + actions.width, safe.x + safe.width);
       EXPECT_LE(actions.y + actions.height, safe.y + safe.height);
-      if (top >= safe.y + 74) EXPECT_EQ(offset, 0);
+      if (top >= safe.y + 74)
+        EXPECT_LE(actions.y + actions.height, top - 10);
+      else
+        EXPECT_EQ(actions.y, safe.y);
       for (int i = 0; i < 3; ++i) {
         const Rect button = selectionGeometry::button(actions, i, 8);
         EXPECT_EQ(selectionGeometry::actionAt(actions, 8, button.x, button.y), i);
@@ -201,6 +204,17 @@ TEST(SelectionGeometry, VerticalDragFindsTheNextLineAcrossWhitespace) {
   EXPECT_FALSE(selectionGeometry::nearerWord(Rect{110, 100, 10, 20}, first, 99, 110));
 }
 
+TEST(SelectionGeometry, PageAdvanceAcceptsBottomEdgeAcrossThePageWidth) {
+  for (const Rect safe : {Rect{0, 0, 480, 750}, Rect{40, 0, 760, 480}, Rect{0, 40, 480, 760}}) {
+    for (const int x : {safe.x, safe.x + safe.width / 2, safe.x + safe.width - 1}) {
+      EXPECT_TRUE(selectionGeometry::atBottomEdge(safe, 24, x, safe.y + safe.height - 1));
+      EXPECT_TRUE(selectionGeometry::atBottomEdge(safe, 24, x, safe.y + safe.height + 5));
+      EXPECT_FALSE(selectionGeometry::atBottomEdge(safe, 24, x, safe.y + safe.height - 25));
+    }
+    EXPECT_FALSE(selectionGeometry::atBottomEdge(safe, 24, safe.x - 1, safe.y + safe.height));
+  }
+}
+
 TEST(ClippingHighlight, RemovalMatchesPortableAndLegacyHighlightBoundaries) {
   Clipping clip;
   clip.spineIndex = 2;
@@ -225,4 +239,40 @@ TEST(ClippingHighlight, RemovalMatchesPortableAndLegacyHighlightBoundaries) {
   EXPECT_FALSE(clippingContainsWord(clip, 2, 3, 10, 42, 7, 0, 1));
   EXPECT_FALSE(clippingContainsWord(clip, 2, 2, 10, 43, 4, 0, 1));
   EXPECT_FALSE(clippingContainsWord(clip, 2, 2, 11, 42, 4, 0, 1));
+}
+
+TEST(ClippingText, PreservesLiteralHyphensAndJoinsLayoutSplits) {
+  std::string text;
+  ASSERT_TRUE(clippingText::append(text, "well-", 0, 5, 0, 4096));
+  ASSERT_TRUE(clippingText::append(text, "known", 5, 10, 0, 4096));
+  EXPECT_EQ(text, "well-known");
+  text.clear();
+  ASSERT_TRUE(clippingText::append(text, "discre-", 0, 6, 0, 4096));
+  ASSERT_TRUE(clippingText::append(text, "tionary", 6, 13, 0, 4096));
+  EXPECT_EQ(text, "discretionary");
+  text.clear();
+  ASSERT_TRUE(clippingText::append(text, "가나", 0, 2, 0, 4096));
+  ASSERT_TRUE(clippingText::append(text, "다라", 2, 4, 0, 4096));
+  EXPECT_EQ(text, "가나다라");
+  ASSERT_TRUE(clippingText::append(text, "<tag>", 5, 10, ' ', 4096));
+  EXPECT_EQ(text, "가나다라 <tag>");
+  const auto before = text;
+  EXPECT_FALSE(clippingText::append(text, "too long", 11, 19, ' ', text.size() + 1));
+  EXPECT_EQ(text, before);
+}
+
+TEST(ClippingHighlight, LegacySignatureIncludesCharacterAndWordSpacing) {
+  ReaderRenderSpec spec;
+  const auto original = readerRenderSpecSignature(spec);
+  spec.characterSpacing = 1;
+  EXPECT_NE(readerRenderSpecSignature(spec), original);
+  spec.characterSpacing = 0;
+  spec.wordSpacingPercent = 110;
+  EXPECT_NE(readerRenderSpecSignature(spec), original);
+}
+
+TEST(SelectionGeometry, KeepsCursorClearOfHintsOnEitherAxis) {
+  EXPECT_EQ(selectionGeometry::keepVisible(0, 20, 40, 700), 40);
+  EXPECT_EQ(selectionGeometry::keepVisible(735, 20, 40, 700), -15);
+  EXPECT_EQ(selectionGeometry::keepVisible(100, 20, 40, 700), 0);
 }
