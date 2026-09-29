@@ -11,7 +11,6 @@ inline constexpr size_t CLIPPING_CHAPTER_TITLE_MAX = 48;
 // a complete multi-paragraph selection without growing the saved-item index.
 inline constexpr size_t CLIPPING_TEXT_MAX = 4U * 1024U;
 inline constexpr uint16_t CLIPPING_MAX_PER_BOOK = 256;
-inline constexpr uint16_t CLIPPING_MAX_PAGE_MATCHES = 16;
 
 struct Clipping {
   uint16_t spineIndex = 0;
@@ -24,17 +23,14 @@ struct Clipping {
   uint16_t paragraphIndex = UINT16_MAX;
   uint32_t timestamp = 0;
   uint32_t layoutSignature = 0;
+  uint32_t startOffset = UINT32_MAX;
+  uint32_t endOffset = UINT32_MAX;
+  uint64_t syncRevision = 0;
+  char id[65] = {};
+  bool pendingUpload = true;
   uint32_t textOffset = 0;
   uint16_t textLength = 0;
   char chapterTitle[CLIPPING_CHAPTER_TITLE_MAX] = {};
-};
-
-struct ClippedBookEntry {
-  std::string bookTitle;
-  std::string bookAuthor;
-  std::string bookPath;
-  std::string bookType;
-  uint16_t count = 0;
 };
 
 class ClippingStore {
@@ -53,14 +49,17 @@ class ClippingStore {
 
   AddResult addClipping(uint16_t spineIndex, uint16_t startPage, uint16_t endPage, uint16_t pageCount,
                         uint16_t startWordIndex, uint16_t endWordIndex, uint16_t wordCount, const char* chapterTitle,
-                        uint16_t paragraphIndex, const std::string& text, uint32_t layoutSignature);
-  bool stampMissingLayoutSignature(uint32_t layoutSignature);
+                        uint16_t paragraphIndex, const std::string& text, uint32_t layoutSignature,
+                        uint32_t startOffset = UINT32_MAX, uint32_t endOffset = UINT32_MAX);
   bool removeClippingAt(size_t index);
   bool saveToFile();
-  void clearAll();
+  bool prepareSync();
+  bool finishUploads();
+  bool applyRemote(const Clipping& clipping, const std::string& text, bool deleted);
+  bool nextDeletion(uint32_t& offset, char (&id)[65]) const;
+  bool finishDeletions();
 
   bool hasClippings() const { return !clippings.empty(); }
-  bool hasClippingForPage(uint16_t spineIndex, uint16_t page) const;
   size_t clippingCount() const { return clippings.size(); }
   const Clipping* clippingAt(size_t index) const;
   const std::vector<Clipping>& getClippings() const { return clippings; }
@@ -68,9 +67,7 @@ class ClippingStore {
   bool readClippingText(size_t index, std::string& out) const;
   bool readClippingText(const Clipping& clipping, std::string& out) const;
 
-  static bool hasAnyClippings();
   static bool hasForFilePath(const std::string& filePath, const std::string& bookType);
-  static bool getAllClippedBooks(std::vector<ClippedBookEntry>& out);
   static void deleteForFilePath(const std::string& filePath, const std::string& bookType);
   static bool migrateForFilePath(const std::string& oldFilePath, const std::string& newFilePath,
                                  const std::string& title, const std::string& author, const std::string& bookType,
@@ -87,7 +84,7 @@ class ClippingStore {
   bool dirty = false;
 
   bool readFromFile();
-  bool readFromFile(const std::string& path, std::vector<Clipping>& out) const;
+  bool readFromFile(const std::string& path, std::vector<Clipping>& out);
   bool writeToFile(const std::string* replacementText = nullptr, size_t replacementIndex = SIZE_MAX,
                    const std::string* textSourcePath = nullptr);
 };

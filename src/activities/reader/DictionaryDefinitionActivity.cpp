@@ -10,7 +10,6 @@
 
 #include "CrossPointSettings.h"
 #include "components/UITheme.h"
-#include "fontIds.h"
 #include "util/DictHtmlPages.h"
 #include "util/HtmlToPlainText.h"
 
@@ -270,15 +269,12 @@ void DictionaryDefinitionActivity::render(RenderLock&&) {
   const int contentWidth = renderer.getScreenWidth() - hintGutterWidth;
   const int contentY = isInverted ? metrics.buttonHintsHeight : 0;
 
-  // Header: matched headword left, page counter right.
-  const int headerY = contentY + metrics.topPadding + 10;
-  renderer.drawText(UI_12_FONT_ID, contentX + SIDE_PADDING, headerY, headword.c_str(), true, EpdFontFamily::BOLD);
+  char counter[16] = {};
   if (totalPages > 1) {
-    char counter[16];
     snprintf(counter, sizeof(counter), "%d/%d", currentPage + 1, totalPages);
-    const int counterWidth = renderer.getTextWidth(UI_10_FONT_ID, counter);
-    renderer.drawText(UI_10_FONT_ID, contentX + contentWidth - SIDE_PADDING - counterWidth, headerY, counter);
   }
+  GUI.drawHeader(renderer, Rect{contentX, contentY + metrics.topPadding, contentWidth, metrics.headerHeight},
+                 headword.c_str(), counter[0] ? counter : nullptr);
 
   // Body: two-pass draw inside a prewarm scope (same pattern as the reader's
   // renderContents) so SD-card font glyphs load from SD in one batch instead

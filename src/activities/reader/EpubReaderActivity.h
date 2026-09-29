@@ -168,7 +168,7 @@ class EpubReaderActivity final : public ReaderActivity {
   void activateMoreRow(int row);
   void openFootnoteSelect(bool reopenMenuOnCancel);
   void openDictionaryWordSelect();
-  void startClipSelection();
+  void startClipSelection(int initialX = -1, int initialY = -1);
   void openClippings();
   bool launchKOReaderSync();
   unsigned long confirmLongPressThreshold() const;

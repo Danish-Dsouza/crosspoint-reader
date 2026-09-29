@@ -16,11 +16,13 @@
 class DictionaryWordSelectActivity final : public Activity {
  public:
   explicit DictionaryWordSelectActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
-                                        std::unique_ptr<Page> page, int marginLeft, int marginTop)
+                                        std::unique_ptr<Page> page, int marginLeft, int marginTop,
+                                        std::string lookupText = {})
       : Activity("DictionaryWordSelect", renderer, mappedInput),
         page(std::move(page)),
         marginLeft(marginLeft),
-        marginTop(marginTop) {}
+        marginTop(marginTop),
+        lookupText(std::move(lookupText)) {}
 
   void onEnter() override;
   void loop() override;
@@ -59,6 +61,8 @@ class DictionaryWordSelectActivity final : public Activity {
   uint16_t rowCount = 0;
   unsigned long lastHorizontalMoveTime = 0;
 
+  std::string lookupText;
+  bool lookupPending = false;
   Dictionary dict;
   bool dictOpenAttempted = false;
   bool dictOpenOk = false;

@@ -101,7 +101,6 @@ bool ClippingsManager::saveClipping(const std::string& bookTitle, const std::str
   const bool ok = file.write(buffer.data(), buffer.size()) == buffer.size();
   const bool rolledBack = ok || file.truncate(originalSize);
   file.flush();
-  file.close();
 
   if (!ok) {
     if (!rolledBack) LOG_ERR("CLIP", "Failed to roll back partial write to %s", CLIPPINGS_PATH);

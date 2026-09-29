@@ -183,6 +183,7 @@ inline SettingInfo buildDictionarySetting(const std::vector<DictionaryEntry>& di
 inline std::vector<StrId> buildLongPressMenuValues() {
   std::vector<StrId> values = {StrId::STR_KOSYNC, StrId::STR_DISABLED, StrId::STR_BOOKMARK_OPTION,
                                StrId::STR_DICTIONARY};
+  values.reserve(CrossPointSettings::LONG_PRESS_MENU_FUNCTION_COUNT);
   if (BoardConfig::hasHomeKey()) values.push_back(StrId::STR_READER_MENU);
   values.push_back(StrId::STR_SAVE_CLIPPING);
   return values;
@@ -217,6 +218,7 @@ inline SettingInfo buildLongPressMenuSetting() {
 inline std::vector<StrId> buildShortPowerButtonValues() {
   std::vector<StrId> values = {StrId::STR_IGNORE, StrId::STR_SLEEP, StrId::STR_PAGE_TURN, StrId::STR_FORCE_REFRESH,
                                StrId::STR_FOOTNOTES};
+  values.reserve(CrossPointSettings::SHORT_PWRBTN_COUNT);
   if (BoardConfig::hasTouch()) values.push_back(StrId::STR_CONFIRM);
   values.push_back(StrId::STR_SAVE_CLIPPING);
   return values;
@@ -490,6 +492,15 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
               KOREADER_STORE.saveToFile();
             },
             "koSyncBehavior", StrId::STR_KOREADER_SYNC),
+        SettingInfo::DynamicEnum(
+            StrId::STR_SYNC_CLIPPINGS, {StrId::STR_STATE_OFF, StrId::STR_STATE_ON},
+            [] { return static_cast<uint8_t>(KOREADER_STORE.getSyncClippings()); },
+            [](uint8_t v) {
+              if (KOREADER_STORE.getSyncClippings() == (v != 0)) return;
+              KOREADER_STORE.setSyncClippings(v != 0);
+              KOREADER_STORE.saveToFile();
+            },
+            "koSyncClippings", StrId::STR_KOREADER_SYNC),
         // --- Status Bar Settings (web-only, uses StatusBarSettingsActivity) ---
         SettingInfo::Toggle(StrId::STR_CHAPTER_PAGE_COUNT, &CrossPointSettings::statusBarChapterPageCount,
                             "statusBarChapterPageCount", StrId::STR_CUSTOMISE_STATUS_BAR),

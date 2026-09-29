@@ -234,9 +234,9 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
   shortPwrBtn = clamp(doc["shortPwrBtn"] | (uint8_t)IGNORE, (uint8_t)SHORT_PWRBTN_COUNT, (uint8_t)IGNORE);
   if (BoardConfig::hasHomeKey() && doc["homeButtonLongPressAction"].isNull() &&
       !doc["longPressMenuFunction"].isNull()) {
-    static constexpr HomeButtonAction LEGACY[] = {HomeButtonAction::Sync, HomeButtonAction::Ignore,
-                                                  HomeButtonAction::Bookmark, HomeButtonAction::Dictionary,
-                                                  HomeButtonAction::ReaderMenu};
+    static constexpr HomeButtonAction LEGACY[] = {HomeButtonAction::Sync,       HomeButtonAction::Ignore,
+                                                  HomeButtonAction::Bookmark,   HomeButtonAction::Dictionary,
+                                                  HomeButtonAction::ReaderMenu, HomeButtonAction::CreateClipping};
     if (s.longPressMenuFunction < sizeof(LEGACY) / sizeof(LEGACY[0])) {
       s.homeButtonLongPressAction = static_cast<uint8_t>(LEGACY[s.longPressMenuFunction]);
       needsResave = true;

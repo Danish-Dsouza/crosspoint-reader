@@ -45,6 +45,13 @@ void DictionaryWordSelectActivity::onEnter() {
   Activity::onEnter();
   fontId = SETTINGS.getReaderFontId();
   lineHeight = renderer.getLineHeight(fontId);
+  if (!lookupText.empty()) {
+    lookupPending = true;
+    popupMsg = StrId::STR_DICT_LOOKING_UP;
+    popup = Popup::Busy;
+    requestUpdate();
+    return;
+  }
   // No null check: a failed allocation just disables the differential
   // fast path (drawHighlightWithSnapshot skips the read), keeping the
   // full-repaint path as the fallback.
@@ -153,7 +160,11 @@ void DictionaryWordSelectActivity::moveVertical(const int direction) {
 }
 
 void DictionaryWordSelectActivity::performLookup() {
-  popup = Popup::Busy;
+  {
+    RenderLock lock;
+    popupMsg = StrId::STR_DICT_LOOKING_UP;
+    popup = Popup::Busy;
+  }
   if (!dictOpenAttempted) {
     dictOpenAttempted = true;
     dictOpenOk = dict.open(SETTINGS.dictionaryName);
@@ -162,7 +173,10 @@ void DictionaryWordSelectActivity::performLookup() {
     // the sidecar ourselves, which is handled below.
     dictNeedsIndex = dictOpenOk && dict.needsIndex();
   }
-  popupMsg = dictNeedsIndex ? StrId::STR_DICT_INDEXING : StrId::STR_DICT_LOOKING_UP;
+  {
+    RenderLock lock;
+    popupMsg = dictNeedsIndex ? StrId::STR_DICT_INDEXING : StrId::STR_DICT_LOOKING_UP;
+  }
   requestUpdateAndWait();  // paint the page + busy popup before blocking on SD
 
   bool ok = dictOpenOk;
@@ -175,14 +189,27 @@ void DictionaryWordSelectActivity::performLookup() {
   std::string definition;
   std::string headword;
   Dictionary::LookupResult result = Dictionary::LookupResult::NotFound;
-  const bool found = ok && dict.lookup(words[selected].text, definition, headword, &result);
+  const bool found =
+      ok && dict.lookup(lookupText.empty() ? words[selected].text : lookupText.c_str(), definition, headword, &result);
 
   if (found) {
     popup = Popup::None;
-    startActivityForResult(
-        std::make_unique<DictionaryDefinitionActivity>(renderer, mappedInput, std::move(headword),
-                                                       std::move(definition), dict.definitionsAreHtml()),
-        [this](const ActivityResult&) { requestUpdate(); });
+    auto activity = makeUniqueNoThrow<DictionaryDefinitionActivity>(renderer, mappedInput, std::move(headword),
+                                                                    std::move(definition), dict.definitionsAreHtml());
+    if (!activity) {
+      LOG_ERR("DICT", "OOM: definition activity");
+      popup = Popup::Error;
+      popupMsg = StrId::STR_DICT_LOW_MEMORY;
+      popupTime = millis();
+      requestUpdate();
+      return;
+    }
+    startActivityForResult(std::move(activity), [this](const ActivityResult&) {
+      if (!lookupText.empty())
+        finish();
+      else
+        requestUpdate();
+    });
     return;
   }
   // Name the failure: a genuine miss is "Not found"; a word that WAS found but
@@ -230,8 +257,17 @@ void DictionaryWordSelectActivity::performLookup() {
 }
 
 void DictionaryWordSelectActivity::loop() {
+  if (lookupPending) {
+    lookupPending = false;
+    performLookup();
+    return;
+  }
   if (popup == Popup::NotFound || popup == Popup::Error) {
     if (millis() - popupTime >= POPUP_DURATION_MS) {
+      if (!lookupText.empty()) {
+        finish();
+        return;
+      }
       popup = Popup::None;
       requestUpdate();
     }

@@ -9,13 +9,13 @@
 #include <vector>
 
 #include "activities/Activity.h"
+#include "components/themes/BaseTheme.h"
 
 class ClipSelectionActivity final : public Activity {
  public:
-  ClipSelectionActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::unique_ptr<Page> page,
-                        int marginLeft, int marginTop) = delete;
   ClipSelectionActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
-                        std::vector<std::unique_ptr<Page>> pages, int marginLeft, int marginTop);
+                        std::vector<std::unique_ptr<Page>> pages, int marginLeft, int marginTop, int initialX = -1,
+                        int initialY = -1);
 
   void onEnter() override;
   void loop() override;
@@ -32,6 +32,8 @@ class ClipSelectionActivity final : public Activity {
     uint16_t row = 0;
     uint8_t pageOffset = 0;
     uint16_t pageWordIndex = 0;
+    uint32_t startOffset = UINT32_MAX;
+    uint32_t endOffset = UINT32_MAX;
     const char* text = nullptr;
     EpdFontFamily::Style style = EpdFontFamily::REGULAR;
     bool paragraphStart = false;
@@ -42,12 +44,17 @@ class ClipSelectionActivity final : public Activity {
   bool extractWords();
   int closestInRow(uint16_t row, int centerX) const;
   int wordAt(int x, int y) const;
+  bool selectionContains(int x, int y) const;
   int nextPageStartIndexForTouchDrag() const;
   bool isWithinCurrentPageEndDwellSlop(int x, int y) const;
   void moveVertical(int direction);
   void selectIndex(int index);
   void moveToPage(int pageOffset);
-  void confirmSelection();
+  void confirmSelection(ClippingResult::Action action = ClippingResult::Action::Clip);
+  Rect handleRect(int index, bool start) const;
+  Rect actionRect() const;
+  int selectionTop() const;
+  int textOffset() const;
   void cancel();
   std::string buildSelectedText(int first, int last) const;
   void drawSelection() const;
@@ -55,6 +62,8 @@ class ClipSelectionActivity final : public Activity {
   std::vector<std::unique_ptr<Page>> pages;
   const int marginLeft;
   const int marginTop;
+  const int initialX;
+  const int initialY;
   int fontId = 0;
   int lineHeight = 0;
   std::unique_ptr<WordBox[]> words;
@@ -64,6 +73,9 @@ class ClipSelectionActivity final : public Activity {
   uint8_t currentPageOffset = 0;
   uint16_t rowCount = 0;
   bool touchDragSelecting = false;
+  bool ignoreInitialTouch = false;
+  int dragOffsetX = 0;
+  int dragOffsetY = 0;
   bool touchDragHasMoved = false;
   int touchDragStartX = 0;
   int touchDragStartY = 0;

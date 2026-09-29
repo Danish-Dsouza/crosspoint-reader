@@ -6,6 +6,7 @@
 #include <string>
 
 #include "clippings/ClippingPreview.h"
+#include "clippings/SelectionGeometry.h"
 
 namespace {
 struct Reader {
@@ -148,4 +149,39 @@ TEST(ClippingPreview, InternalWhitespaceStillCountsAgainstReadBudget) {
   ASSERT_TRUE(readPreview(reader, reader.text.size(), out));
   EXPECT_EQ(out.text(), std::string("hello") + ELLIPSIS);
   EXPECT_LE(reader.pos, 320u);
+}
+
+TEST(SelectionGeometry, ToolbarStaysAboveTextAndInsideEveryOrientedSafeArea) {
+  for (const Rect safe :
+       {Rect{12, 20, 456, 744}, Rect{20, 12, 744, 456}, Rect{8, 32, 456, 744}, Rect{32, 8, 744, 456}}) {
+    for (const int top : {safe.y, safe.y + 40, safe.y + safe.height / 2, safe.y + safe.height - 80}) {
+      const Rect actions = selectionGeometry::actions(safe, top, 64, 10);
+      const int offset = selectionGeometry::textOffset(actions, top, 10);
+      EXPECT_GE(actions.y, safe.y);
+      EXPECT_LE(actions.y + actions.height, top + offset);
+      EXPECT_LE(actions.x + actions.width, safe.x + safe.width);
+      EXPECT_LE(actions.y + actions.height, safe.y + safe.height);
+      if (top >= safe.y + 74) EXPECT_EQ(offset, 0);
+      for (int i = 0; i < 3; ++i) {
+        const Rect button = selectionGeometry::button(actions, i, 8);
+        EXPECT_EQ(selectionGeometry::actionAt(actions, 8, button.x, button.y), i);
+        EXPECT_EQ(selectionGeometry::actionAt(actions, 8, button.x + button.width - 1, button.y + button.height - 1),
+                  i);
+        EXPECT_EQ(selectionGeometry::actionAt(actions, 8, button.x + button.width, button.y), -1);
+      }
+      EXPECT_EQ(selectionGeometry::actionAt(actions, 8, actions.x, actions.y), -1);
+      EXPECT_EQ(selectionGeometry::actionAt(actions, 8, actions.x + actions.width, actions.y), -1);
+      EXPECT_EQ(selectionGeometry::actionAt(actions, 8, actions.x, actions.y + actions.height), -1);
+    }
+  }
+}
+
+TEST(SelectionGeometry, FirstButtonFollowsStartHandleUntilScreenEdge) {
+  const Rect safe{12, 20, 456, 744};
+  const Rect row = selectionGeometry::actions(safe, 200, 48, 10, 260, 92);
+  EXPECT_EQ(selectionGeometry::button(row, 0, 8).x, 100);
+  const Rect atRight = selectionGeometry::actions(safe, 200, 48, 10, 260, 420);
+  EXPECT_EQ(atRight.x + atRight.width, safe.x + safe.width);
+  const Rect atLeft = selectionGeometry::actions(safe, 200, 48, 10, 260, 0);
+  EXPECT_EQ(atLeft.x, safe.x);
 }

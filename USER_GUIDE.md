@@ -313,7 +313,7 @@ The Settings screen allows you to configure the device's behavior. There are a f
   - "Page Scroll" - Long-pressing scrolls a page up/down
 - **Long-press Menu**: Selects the function bound to holding the menu button (Confirm) while reading an EPUB. **Cycles through the available functions** each time the setting is selected — additional functions may be added in future releases, so this is not a binary on/off toggle. A short press of Confirm always opens the reader menu as normal:
   - "Bookmark" (default) - Hold Confirm (~0.4 second) to drop a bookmark at the current page.
-  - "KOSync" - Hold Confirm (~1 second) to launch KOReader sync directly.
+  - "CrossPoint Sync" - Hold Confirm (~1 second) to launch KOReader sync directly.
   - "Dictionary" - Hold Confirm (~0.4 second) to start dictionary word selection on the current page (see [docs/dictionary.md](docs/dictionary.md)).
   - "Create Clipping" - Hold Confirm (~0.4 second) to start clipping selection on the current page.
   - "Disabled" - Long-press is ignored; only short-press opens the reader menu.
@@ -333,7 +333,7 @@ The Settings screen allows you to configure the device's behavior. There are a f
 
 - **Wi-Fi Networks**: Connect to Wi-Fi networks for file transfers and firmware updates.
 
-- **KOReader Sync**: Options for setting up KOReader for syncing book progress. **Smart sync** is the default for new configurations and auto-resolves simple push/pull decisions. Existing credential files retain **Ask every time** when migrated; you can switch Sync Behavior at any time if you prefer manual confirmation.
+- **CrossPoint Sync**: Settings for syncing book progress with CrossPoint Sync or a compatible KOSync server. **Smart sync** is the default for new configurations and auto-resolves simple push/pull decisions. Existing credential files retain **Ask every time** when migrated; you can switch Sync Behavior at any time if you prefer manual confirmation.
 
 - **OPDS Servers**: Manage one or more OPDS [(Open Publication Distribution System)](https://en.wikipedia.org/wiki/Open_Publication_Distribution_System) libraries for browsing and downloading books. See [OPDS Servers (Multiple Libraries)](#365-opds-servers-multiple-libraries) below.
 
@@ -406,7 +406,7 @@ When **Sync Server URL** is left empty, CrossPoint uses the free CrossPoint sync
 
 1. On each CrossPoint device:
 
-   - Go to **Settings -> System -> KOReader Sync**.
+   - Go to **Settings -> System -> CrossPoint Sync**.
 
    - Set **Username** and **Password** (enter the plain password; CrossPoint computes MD5 internally, and use the same values on all devices).
 
@@ -422,7 +422,7 @@ Use this if you already sync KOReader devices against the official public server
 
 1. On each CrossPoint device:
 
-   - Go to **Settings -> System -> KOReader Sync**.
+   - Go to **Settings -> System -> CrossPoint Sync**.
 
    - Set **Sync Server URL** to `https://sync.koreader.rocks` (required; an empty URL now points at the CrossPoint server instead).
 
@@ -508,7 +508,7 @@ If this returns `HTTP 402` with `{"code":2002,"message":"Username is already reg
 
 4. On each CrossPoint device:
    
-   - Go to **Settings -> System -> KOReader Sync**.
+   - Go to **Settings -> System -> CrossPoint Sync**.
    
    - Set **Username** and **Password** (enter the plain password; CrossPoint computes MD5 internally, and use the same values on all devices).
    
@@ -520,8 +520,9 @@ If you use the HTTPS listener, use `https://<server-ip>:7200` (`curl -k` only fo
 
 ##### Syncing While Reading
 
-Once any of the options above is set up, press **Confirm** while reading to open the reader menu, then select **Sync Progress**. Alternatively, set **Settings -> Controls -> Long-press Menu** to **KOSync** and hold Confirm to launch sync directly.
+Once any of the options above is set up, press **Confirm** while reading to open the reader menu, then select **Sync Progress**. Alternatively, set **Settings -> Controls -> Long-press Menu** to **CrossPoint Sync** and hold Confirm to launch sync directly.
 
+- **Sync Clippings** is off by default. Enable it only for a compatible CrossPoint Sync server; manual **Sync Progress** then uploads and downloads this book’s clippings too. Leave it off for ordinary KOSync servers.
 - With **Sync Behavior** set to **Ask every time**, choose **Apply Remote** to jump to remote progress or **Upload Local** to push current progress.
 - With **Sync Behavior** set to **Smart sync**, CrossPoint auto-resolves simple cases: upload when no remote progress exists, confirm and leave both unchanged when local and remote progress are already synchronized, upload when local progress is further ahead, or apply remote when remote progress is further ahead.
 
@@ -695,7 +696,7 @@ Bookmarks are stored in the `.crosspoint/bookmarks` folder in the JSON format.
 
 ### 5.3 Clippings and Highlights
 
-Select **Create Clipping** from the Reader Menu, move to the first word, and press **Confirm**. Move to the last word and press **Confirm** again to save the range. On touch devices, tap the first and last words instead. Saved ranges appear with a gray highlight when that page is reopened.
+Select **Create Clipping** from the Reader Menu, move to the first word, and press **Confirm**. Move to the last word and press **Confirm** again to save the range. On touch devices, press and hold a word in the reader to select it. Drag either selection handle to adjust the range, then tap **Look Up**, **Clip**, or **Bookmark** above it. Releasing a handle keeps the selection open; tapping outside the text dismisses it. **Look Up** searches the selected text in your dictionary; **Bookmark** toggles the bookmark on the selection’s final page. Saved ranges appear with a gray highlight when that page is reopened.
 
 Select **View Clippings** to browse saved excerpts for the current book. Press **Confirm** to read an individual clipping, or hold **Confirm** for about 0.7 seconds to delete it. Touch devices can open a clipping with a tap or delete it with a long press.
 
