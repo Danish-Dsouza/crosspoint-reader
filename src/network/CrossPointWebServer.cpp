@@ -5,6 +5,7 @@
 #include <FsHelpers.h>
 #include <HalGPIO.h>
 #include <HalStorage.h>
+#include <LibraryBuilder.h>
 #include <Logging.h>
 #include <WiFi.h>
 #include <esp_efuse.h>
@@ -32,6 +33,13 @@ namespace {
 // Folders/files to hide from the web interface file browser
 // Note: Items starting with "." are automatically hidden
 constexpr const char* HIDDEN_ITEMS[] = {"System Volume Information", "XTCache"};
+
+// Formats the library index tracks (LibraryIndex isBookName): an upload of any
+// of these must mark the index dirty so the next Library entry rebuilds it.
+bool isLibraryBookFile(const String& filename) {
+  return FsHelpers::checkFileExtension(filename, ".epub") || FsHelpers::checkFileExtension(filename, ".txt") ||
+         FsHelpers::checkFileExtension(filename, ".md") || FsHelpers::checkFileExtension(filename, ".xtc");
+}
 constexpr uint16_t UDP_PORTS[] = {54982, 48123, 39001, 44044, 59678};
 constexpr uint16_t LOCAL_UDP_PORT = 8134;
 
@@ -222,6 +230,13 @@ void CrossPointWebServer::begin() {
   LOG_DBG("WEB", "Access at http://%s/", ipAddr.c_str());
   LOG_DBG("WEB", "WebSocket at ws://%s:%d/", ipAddr.c_str(), wsPort);
   LOG_DBG("WEB", "[MEM] Free heap after server.begin(): %d bytes", ESP.getFreeHeap());
+}
+
+bool CrossPointWebServer::dropUploadIfCancelled() const {
+  if (!uploadCancelCheck || !uploadCancelCheck()) return false;
+  // WebServer's next read of the body then fails and it raises UPLOAD_FILE_ABORTED.
+  server->client().stop();
+  return true;
 }
 
 void CrossPointWebServer::abortWsUpload(const char* tag) {
@@ -722,6 +737,7 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
 
     LOG_DBG("WEB", "[UPLOAD] File created successfully: %s", filePath.c_str());
   } else if (upload.status == UPLOAD_FILE_WRITE) {
+    if (dropUploadIfCancelled()) return;
     if (state.file && state.error.isEmpty()) {
       // Buffer incoming data and flush when buffer is full
       // This reduces SD card write operations and improves throughput
@@ -759,6 +775,7 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
       }
     }
   } else if (upload.status == UPLOAD_FILE_END) {
+    if (!server->client().connected()) return;
     if (state.file) {
       // Flush any remaining buffered data
       if (!flushUploadBuffer(state)) {
@@ -781,6 +798,7 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
         if (!filePath.endsWith("/")) filePath += "/";
         filePath += state.fileName;
         clearBookCache(filePath.c_str());
+        if (isLibraryBookFile(state.fileName)) library::markLibraryIndexDirty();
       }
     }
   } else if (upload.status == UPLOAD_FILE_ABORTED) {
@@ -1694,6 +1712,7 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
             wsLastCompleteAt = millis();
             LOG_DBG("WS", "Zero-byte upload complete: %s", filePath.c_str());
             clearBookCache(filePath.c_str());
+            if (isLibraryBookFile(wsUploadFileName)) library::markLibraryIndexDirty();
             wsServer->sendTXT(num, "DONE");
             wsLastProgressSent = 0;
             break;
@@ -1763,6 +1782,7 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
         if (!filePath.endsWith("/")) filePath += "/";
         filePath += wsUploadFileName;
         clearBookCache(filePath.c_str());
+        if (isLibraryBookFile(wsUploadFileName)) library::markLibraryIndexDirty();
 
         wsServer->sendTXT(num, "DONE");
         wsLastProgressSent = 0;
@@ -1878,7 +1898,7 @@ void CrossPointWebServer::handleFontUploadData() {
     }
 
     case UPLOAD_FILE_WRITE: {
-      if (!fontUpload.valid) break;
+      if (dropUploadIfCancelled() || !fontUpload.valid) break;
       resetTaskWatchdogIfSubscribed();
 
       // Validate magic bytes on first chunk only

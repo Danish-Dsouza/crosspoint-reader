@@ -16,6 +16,7 @@
 #include <I18n.h>
 #include <Logging.h>
 #include <SPI.h>
+#include <VectorFontSupport.h>
 #include <WiFi.h>
 #include <XteinkDetect.h>
 #include <builtinFonts/all.h>
@@ -34,18 +35,27 @@
 #include "activities/settings/SdFirmwareUpdateActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
-#include "images/LoadingIcon.h"
 #include "platform/UsbSerialJtagHandoff.h"
 #include "util/ButtonNavigator.h"
 #include "util/ScreenshotUtil.h"
 #include "util/Timezones.h"
+
+#if CROSSPOINT_VECTOR_FONTS
+// Rendering (incl. FreeType TTF rasterization) runs on the Arduino loop task.
+// The default 8 KB stack overflows inside FreeType's FT_Open_Face / variable-font
+// parsing. This runtime override applies even with the prebuilt (dio_opi) core,
+// where CONFIG_ARDUINO_LOOP_STACK_SIZE from sdkconfig is baked in and ignored.
+// Vector-font boards only: without TTF the stock loop stack has always sufficed,
+// and non-PSRAM boards need the 16KB back in DRAM.
+SET_LOOP_TASK_STACK_SIZE(24 * 1024)
+#endif
 
 GfxRenderer renderer(display);
 MappedInputManager mappedInputManager(gpio, renderer);
 ActivityManager activityManager(renderer, mappedInputManager);
 FontDecompressor fontDecompressor;
 SdCardFontSystem sdFontSystem;
-FontCacheManager fontCacheManager(renderer.getFontMap(), renderer.getSdCardFonts());
+FontCacheManager fontCacheManager(renderer.getFontMap(), renderer.getSdCardFonts(), renderer.getTtfFonts());
 static unsigned long allowSleepAt = 0;
 static unsigned long lastX4ProPowerClickAt = 0;
 
@@ -130,6 +140,8 @@ RTC_NOINIT_ATTR uint32_t silentRebootPayload;
 constexpr uint32_t SILENT_REBOOT_MAGIC = 0xC1EAB007;
 constexpr uint32_t SILENT_REBOOT_TARGET_HOME = 0;
 constexpr uint32_t SILENT_REBOOT_TARGET_READER = 1;
+constexpr uint32_t SILENT_REBOOT_TARGET_SETTINGS = 2;
+constexpr uint32_t SILENT_REBOOT_TARGET_MAX = SILENT_REBOOT_TARGET_SETTINGS;
 constexpr uint32_t SILENT_REBOOT_LIGHT_ON = 1U << 0;
 
 // How the device is coming back to life, resolved once at boot. Both resume
@@ -161,27 +173,27 @@ static void armSilentReboot(const uint32_t target) {
   silentRebootMagic = SILENT_REBOOT_MAGIC;
 }
 
-void silentRestart() {
+// Returns instead of rebooting when sleep supersedes the reboot; callers keep
+// running in that case.
+static void silentRestartTo(const uint32_t target, const char* targetName) {
   if (deepSleepInProgress) return;  // sleeping supersedes the heap-defrag reboot
-  armSilentReboot(SILENT_REBOOT_TARGET_HOME);
-  LOG_DBG("MAIN", "Silent restart (target=home)");
-  // E-ink retains the previous frame until Home's first paint lands (~2-3s).
-  // Without an overlay, users don't see the reboot and fire input through to
-  // Home. Select on the default selectorIndex=0 then opens the most-recent
-  // book, looking like a trampoline back to the reader they just exited.
+  armSilentReboot(target);
+  LOG_DBG("MAIN", "Silent restart (target=%s)", targetName);
+  // E-ink retains the previous frame until the target's first paint lands
+  // (~2-3s). Without an overlay, users don't see the reboot and fire input
+  // through to the new activity. On Home, Select on the default
+  // selectorIndex=0 opens the most-recent book, looking like a trampoline back
+  // to the reader they just exited.
   GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
   delay(50);
   ESP.restart();
 }
 
-void silentRestartToReader() {
-  if (deepSleepInProgress) return;  // sleeping supersedes the heap-defrag reboot
-  armSilentReboot(SILENT_REBOOT_TARGET_READER);
-  LOG_DBG("MAIN", "Silent restart (target=reader)");
-  GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
-  delay(50);
-  ESP.restart();
-}
+void silentRestart() { silentRestartTo(SILENT_REBOOT_TARGET_HOME, "home"); }
+
+void silentRestartToReader() { silentRestartTo(SILENT_REBOOT_TARGET_READER, "reader"); }
+
+void silentRestartToSettings() { silentRestartTo(SILENT_REBOOT_TARGET_SETTINGS, "settings"); }
 
 void restartToHomeAfterStorageHandoff() {
   if (deepSleepInProgress) return;  // sleeping supersedes the storage handoff reboot
@@ -358,7 +370,7 @@ void setup() {
   // Bound the target range too — RTC_NOINIT memory is uninitialized on cold boot.
   const bool isSilentReboot = (silentRebootMagic == SILENT_REBOOT_MAGIC);
   const uint32_t snapshotTarget =
-      (isSilentReboot && silentRebootTarget <= SILENT_REBOOT_TARGET_READER) ? silentRebootTarget : 0;
+      (isSilentReboot && silentRebootTarget <= SILENT_REBOOT_TARGET_MAX) ? silentRebootTarget : 0;
   const bool silentRebootLightOn = isSilentReboot && (silentRebootPayload & SILENT_REBOOT_LIGHT_ON) != 0;
   silentRebootMagic = 0;
   silentRebootTarget = 0;
@@ -498,24 +510,14 @@ void setup() {
       APP_STATE.showBootScreen = true;
       APP_STATE.saveToFile();
       if (Storage.exists(SLEEP_FRAME_FILE) && loadSleepFrameBuffer()) {
-        const bool useDifferentialRefresh = gpio.deviceIsX3();
-        if (useDifferentialRefresh) {
+        if (gpio.deviceIsX3()) {
           // begin() clears the X3 controller RAM, so restore the saved frame as
-          // the baseline before replacing the moon with the loading icon.
+          // the baseline for the first reader paint without refreshing the panel.
           renderer.cleanupGrayscaleWithFrameBuffer();
-        }
-
-        const auto pageHeight = renderer.getScreenHeight();
-        renderer.drawImage(LoadingIcon, 0, pageHeight - LOADINGICON_HEIGHT, LOADINGICON_WIDTH, LOADINGICON_HEIGHT);
-        if (useDifferentialRefresh) {
-          renderer.displayGrayscaleBase(HalDisplay::FAST_REFRESH);
           allowFastInitialReaderRefresh = true;
-        } else {
-          renderer.displayBuffer(HalDisplay::HALF_REFRESH);
         }
       } else {
-        // The first Home/Reader paint is followed by an explicit clean refresh
-        // because the panel still physically shows the sleep image.
+        // Clean the retained sleep image as part of the first Home paint.
         needsWakeRefresh = true;
       }
       break;
@@ -537,6 +539,9 @@ void setup() {
   } else if (resume == BootResume::Silent && snapshotTarget == SILENT_REBOOT_TARGET_READER &&
              !APP_STATE.openEpubPath.empty()) {
     activityManager.goToReader(APP_STATE.openEpubPath);
+  } else if (resume == BootResume::Silent && snapshotTarget == SILENT_REBOOT_TARGET_SETTINGS) {
+    // Back out of the WiFi rows and the user is where they left off, not on Home.
+    activityManager.goToSettings();
   } else if (resume == BootResume::Silent) {
     // target == home (or reader with no open book): land on home — don't fall
     // through to the sleep-wake "resume reader" logic, which fires on stale
@@ -604,7 +609,8 @@ void loop() {
 
   renderer.setFadingFix(SETTINGS.fadingFix);
 
-  if (Serial && millis() - lastMemPrint >= 10000) {
+  // The ROM console does not depend on Arduino USB CDC's connection state.
+  if ((Serial || FREEINK_LOG_TRANSPORT == FREEINK_LOG_TRANSPORT_ROM_PRINTF) && millis() - lastMemPrint >= 10000) {
     const auto heap = HalMemory::getInternalHeap();
     LOG_INF("MEM", "Free: %zu bytes, Total: %zu bytes, Min Free: %zu bytes, MaxAlloc: %zu bytes", heap.freeBytes,
             heap.totalBytes, heap.minFreeBytes, heap.largestBlockBytes);
@@ -679,16 +685,38 @@ void loop() {
     return;
   }
 
+  const bool x4ProDoubleClickPwrLight = BoardConfig::isX4Pro() && SETTINGS.doubleClickPwrLight;
+
 #if FREEINK_CAP_TOUCH
   // A single X4 Pro power click becomes Confirm only after the frontlight
   // double-click window expires without a second click.
   mappedInputManager.setPowerConfirmClickFrame(false);
-  if (SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::PWR_CONFIRM && BoardConfig::isX4Pro() &&
-      lastX4ProPowerClickAt != 0 && millis() - lastX4ProPowerClickAt > X4PRO_POWER_DOUBLE_CLICK_MS) {
-    lastX4ProPowerClickAt = 0;
-    mappedInputManager.setPowerConfirmClickFrame(true);
+  if (SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::PWR_CONFIRM && x4ProDoubleClickPwrLight) {
+    if (lastX4ProPowerClickAt != 0 && millis() - lastX4ProPowerClickAt > X4PRO_POWER_DOUBLE_CLICK_MS) {
+      lastX4ProPowerClickAt = 0;
+      mappedInputManager.setPowerConfirmClickFrame(true);
+    }
+    // A release held too long to be a double-click candidate (but still within
+    // the normal Confirm press duration) never reaches handleX4ProFrontlightDoubleClick's
+    // click tracking above, so it needs its own Confirm check here.
+    if (mappedInputManager.wasReleased(MappedInputManager::Button::Power) &&
+        gpio.getPowerButtonHeldTime() > X4PRO_POWER_CLICK_MAX_HOLD_MS &&
+        gpio.getPowerButtonHeldTime() <= SETTINGS.getPowerButtonDuration()) {
+      mappedInputManager.setPowerConfirmClickFrame(true);
+    }
   }
 #endif
+
+  // Same deferral for SLEEP: getPowerButtonDuration() drops to 10ms so a quick
+  // tap sleeps the device, which otherwise fires on button-down and never lets
+  // a second click land. Sleep only once the double-click window has passed.
+  if (SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::SLEEP && x4ProDoubleClickPwrLight &&
+      lastX4ProPowerClickAt != 0 && millis() - lastX4ProPowerClickAt > X4PRO_POWER_DOUBLE_CLICK_MS) {
+    lastX4ProPowerClickAt = 0;
+    enterDeepSleep();
+    // This should never be hit as `enterDeepSleep` calls esp_deep_sleep_start
+    return;
+  }
 
   const unsigned long sleepTimeoutMs = SETTINGS.getSleepTimeoutMs();
   if (sleepTimeoutMs > 0 && millis() - lastActivityTime >= sleepTimeoutMs) {
@@ -704,8 +732,15 @@ void loop() {
   static bool powerReleasedSinceWake = false;
   if (!gpio.isPressed(HalGPIO::BTN_POWER)) powerReleasedSinceWake = true;
 
-  if (powerReleasedSinceWake && millis() >= allowSleepAt && gpio.isPressed(HalGPIO::BTN_POWER) &&
-      gpio.getPowerButtonHeldTime() > SETTINGS.getPowerButtonDuration()) {
+  // On X4 Pro with SLEEP, a press still within the click window is a
+  // double-click candidate — let it be released and evaluated above instead
+  // of sleeping on button-down.
+  const bool x4ProAwaitingClickWindow = x4ProDoubleClickPwrLight &&
+                                        SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::SLEEP &&
+                                        gpio.getPowerButtonHeldTime() <= X4PRO_POWER_CLICK_MAX_HOLD_MS;
+
+  if (!x4ProAwaitingClickWindow && powerReleasedSinceWake && millis() >= allowSleepAt &&
+      gpio.isPressed(HalGPIO::BTN_POWER) && gpio.getPowerButtonHeldTime() > SETTINGS.getPowerButtonDuration()) {
     // If the screenshot combination is potentially being pressed, don't sleep
     if (gpio.isPressed(HalGPIO::BTN_DOWN)) {
       return;
@@ -764,10 +799,21 @@ void loop() {
     }
   }
 
+  bool skipLoopDelay = false;
+  {
+    RenderLock lock(RenderLock::Mode::Try);
+    if (!lock.ownsLock()) {
+      // Let rendering advance without treating lock contention as idle.
+      delay(10);
+      return;
+    }
+    skipLoopDelay = activityManager.skipLoopDelay();
+  }
+
   // Add delay at the end of the loop to prevent tight spinning
   // When an activity requests skip loop delay (e.g., webserver running), use yield() for faster response
   // Otherwise, use longer delay to save power
-  if (activityManager.skipLoopDelay()) {
+  if (skipLoopDelay) {
     powerManager.setPowerSaving(false);  // Make sure we're at full performance when skipLoopDelay is requested
     yield();                             // Give FreeRTOS a chance to run tasks, but return immediately
   } else {

@@ -86,6 +86,12 @@ class EpubReaderActivity final : public ReaderActivity {
   // overlay, letting panel->toolbar steps restore the page without a full
   // re-render. Discarded on close / whenever the page under the overlay changes.
   bool overlayPageStored = false;
+  // True while a deferred overlay chrome refresh (pushOverlayRefresh) may still
+  // be running on the panel. settleOverlayRefresh() must run before the
+  // framebuffer is touched or another differential refresh is pushed.
+  bool overlayRefreshPending = false;
+  void pushOverlayRefresh();
+  void settleOverlayRefresh();
   int autoTurnOption = 0;  // current auto page-turn rate index (More panel)
   std::vector<EpubReaderMenuActivity::MenuItem> moreItems;
 
@@ -114,6 +120,8 @@ class EpubReaderActivity final : public ReaderActivity {
   static constexpr int BACKGROUND_BUILD_PAGES_PER_TICK = 2;
   static constexpr size_t BACKGROUND_BUILD_MIN_FREE_HEAP = 32 * 1024;
   static constexpr size_t BACKGROUND_BUILD_MIN_MAX_ALLOC = 16 * 1024;
+  // Requires the render lock; heap admission is checked separately by the build tick.
+  bool backgroundBuildWanted() const;
   bool buildTickHeapGate();
   bool buildHeapPaused = false;
   static constexpr size_t RENDER_MIN_FREE_HEAP = 24 * 1024;
@@ -158,6 +166,7 @@ class EpubReaderActivity final : public ReaderActivity {
   std::string moreRowName(int row) const;
   std::string moreRowValue(int row) const;
   void activateMoreRow(int row);
+  void openFootnoteSelect(bool reopenMenuOnCancel);
   void openDictionaryWordSelect();
   void startClipSelection();
   void openClippings();
