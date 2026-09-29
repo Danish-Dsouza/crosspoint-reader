@@ -5,12 +5,20 @@
 #include <string>
 #include <vector>
 
+#if defined(ARDUINO_ARCH_ESP32)
+#include <sdkconfig.h>
+#endif
+
 inline constexpr size_t CLIPPING_CHAPTER_TITLE_MAX = 48;
 // Clipping text lives on the SD card rather than in every in-memory clipping
 // record. Match the reader's bounded selection-text budget so previews retain
 // a complete multi-paragraph selection without growing the saved-item index.
 inline constexpr size_t CLIPPING_TEXT_MAX = 4U * 1024U;
+#if defined(CONFIG_IDF_TARGET_ESP32S3) && CONFIG_IDF_TARGET_ESP32S3
+inline constexpr uint16_t CLIPPING_MAX_PER_BOOK = 1024;
+#else
 inline constexpr uint16_t CLIPPING_MAX_PER_BOOK = 256;
+#endif
 
 struct Clipping {
   uint16_t spineIndex = 0;

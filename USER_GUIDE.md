@@ -700,6 +700,8 @@ Select **Create Clipping** from the Reader Menu, move to the first word, and pre
 
 Select **View Clippings** to browse saved excerpts for the current book. Press **Confirm** to read an individual clipping, or hold **Confirm** for about 0.7 seconds to delete it. Touch devices can open a clipping with a tap or delete it with a long press.
 
+Each book can store up to **1,024 clippings on ESP32-S3 devices** or **256 on ESP32-C3 devices**. These limits also apply to clippings downloaded through sync.
+
 CrossPoint also appends each saved excerpt to `My Clippings.txt` in the root of the SD card, using the Kindle-compatible title, location, and separator format. Its per-book highlight data is stored under `.crosspoint/clippings`.
 
 ## 6. Current Limitations & Roadmap
