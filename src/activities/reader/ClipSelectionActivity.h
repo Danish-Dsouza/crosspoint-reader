@@ -2,6 +2,7 @@
 
 #include <Epub/Page.h>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -54,6 +55,8 @@ class ClipSelectionActivity final : public Activity {
   void selectIndex(int index);
   void moveToPage(int pageOffset);
   void confirmSelection(ClippingResult::Action action = ClippingResult::Action::Clip);
+  void loopButtons();
+  bool handleButtons(uint8_t buttons);
   Rect handleRect(int index, bool start) const;
   Rect actionRect() const;
   int selectionTop() const;
@@ -69,6 +72,11 @@ class ClipSelectionActivity final : public Activity {
   const int initialX;
   const int initialY;
   OptionPopup actionPopup;
+  // ponytail: retain 16 button frames during refresh; increase only if overflow is observed.
+  std::array<uint8_t, 16> pendingButtons{};
+  size_t pendingButtonCount = 0;
+  uint8_t repeatingButton = 0;
+  uint32_t lastButtonRepeat = 0;
   int fontId = 0;
   int lineHeight = 0;
   std::unique_ptr<WordBox[]> words;
