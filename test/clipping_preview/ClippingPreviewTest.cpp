@@ -154,6 +154,30 @@ TEST(ClippingPreview, InternalWhitespaceStillCountsAgainstReadBudget) {
   EXPECT_LE(reader.pos, 320u);
 }
 
+TEST(SelectionGeometry, SinglePressSelectsTwoWordsInEitherReadingDirection) {
+  for (const bool rtl : {false, true}) {
+    // Reading-order indices run left-to-right in LTR and right-to-left in RTL.
+    const int x[] = {rtl ? 300 : 100, 200, rtl ? 100 : 300};
+    const int anchor = 1;
+    int selected = selectionGeometry::horizontalIndex(anchor, 3, false, true, rtl);
+    EXPECT_GT(x[selected], x[anchor]);
+    EXPECT_EQ(std::abs(selected - anchor) + 1, 2);
+    for (int frame = 0; frame < 20; ++frame) {
+      // A held key, delayed refresh, and release have no new press edge.
+      selected = selectionGeometry::horizontalIndex(selected, 3, false, false, rtl);
+      EXPECT_EQ(std::abs(selected - anchor) + 1, 2);
+    }
+    EXPECT_EQ(selectionGeometry::horizontalIndex(selected, 3, false, true, rtl), selected);
+    selected = selectionGeometry::horizontalIndex(selected, 3, true, false, rtl);
+    EXPECT_EQ(selected, anchor);
+    selected = selectionGeometry::horizontalIndex(selected, 3, true, false, rtl);
+    EXPECT_LT(x[selected], x[anchor]);
+    EXPECT_EQ(selectionGeometry::horizontalIndex(selected, 3, true, false, rtl), selected);
+    EXPECT_EQ(selectionGeometry::horizontalIndex(selected, 3, true, true, rtl), selected);
+  }
+  EXPECT_EQ(selectionGeometry::horizontalIndex(0, 0, false, true), -1);
+}
+
 TEST(SelectionGeometry, ToolbarOverlaysAtTopAndStaysInsideEveryOrientedSafeArea) {
   for (const Rect safe :
        {Rect{12, 20, 456, 744}, Rect{20, 12, 744, 456}, Rect{8, 32, 456, 744}, Rect{32, 8, 744, 456}}) {

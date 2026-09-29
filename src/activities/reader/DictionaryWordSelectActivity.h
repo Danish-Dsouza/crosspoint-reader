@@ -10,7 +10,7 @@
 #include "util/Dictionary.h"
 
 // Word selection over the current reader page: Left/Right step through words
-// in reading order, Up/Down jump rows, Confirm looks the word up and opens
+// in visual order, Up/Down jump rows, Confirm looks the word up and opens
 // DictionaryDefinitionActivity, Back returns to the reader. On touch devices a
 // touch-down moves the highlight and a tap on a word looks it up directly.
 class DictionaryWordSelectActivity final : public Activity {
@@ -59,7 +59,6 @@ class DictionaryWordSelectActivity final : public Activity {
   std::vector<WordBox> words;
   int selected = 0;
   uint16_t rowCount = 0;
-  unsigned long lastHorizontalMoveTime = 0;
 
   std::string lookupText;
   bool lookupPending = false;

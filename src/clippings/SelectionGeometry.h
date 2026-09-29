@@ -7,6 +7,14 @@
 #include "components/themes/BaseTheme.h"
 
 namespace selectionGeometry {
+// Consume press edges only: display refresh can outlast the input's held-state snapshot.
+inline int horizontalIndex(const int selected, const int count, const bool leftPressed, const bool rightPressed,
+                           const bool readingOrderRtl = false) {
+  if (count <= 0) return -1;
+  const int direction = static_cast<int>(rightPressed) - static_cast<int>(leftPressed);
+  return std::clamp(selected + (readingOrderRtl ? -direction : direction), 0, count - 1);
+}
+
 inline int keepVisible(const int position, const int extent, const int start, const int size) {
   return position < start ? start - position : std::min(0, start + size - position - extent);
 }

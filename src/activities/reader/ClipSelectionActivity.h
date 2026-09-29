@@ -38,6 +38,7 @@ class ClipSelectionActivity final : public Activity {
     const char* text = nullptr;
     EpdFontFamily::Style style = EpdFontFamily::REGULAR;
     bool paragraphStart = false;
+    bool isRtl = false;
   };
 
   static constexpr size_t MAX_SELECTABLE_WORDS = 240;
@@ -85,5 +86,4 @@ class ClipSelectionActivity final : public Activity {
   int touchDragStartY = 0;
   int touchDragPageEndIndex = -1;
   unsigned long touchDragPageEndHeldSince = 0;
-  unsigned long lastHorizontalMoveTime = 0;
 };

@@ -12,13 +12,12 @@
 
 #include "CrossPointSettings.h"
 #include "DictionaryDefinitionActivity.h"
+#include "clippings/SelectionGeometry.h"
 #include "components/UITheme.h"
 
 namespace {
 
 constexpr unsigned long POPUP_DURATION_MS = 1500;
-constexpr unsigned long WORD_REPEAT_START_MS = 500;
-constexpr unsigned long WORD_REPEAT_INTERVAL_MS = 500;
 
 // A token is selectable when it has an ASCII alphanumeric or a non-ASCII
 // codepoint outside U+2000-U+206F (dashes, bullets and other General
@@ -311,21 +310,11 @@ void DictionaryWordSelectActivity::loop() {
     return;
   }
 
-  const bool hasNextWord = selected + 1 < static_cast<int>(words.size());
-  const unsigned long now = millis();
-  const bool repeat =
-      mappedInput.getHeldTime() >= WORD_REPEAT_START_MS && now - lastHorizontalMoveTime >= WORD_REPEAT_INTERVAL_MS;
-  const bool moveLeft = mappedInput.wasPressed(MappedInputManager::Button::ScreenLeft) ||
-                        (repeat && mappedInput.isPressed(MappedInputManager::Button::ScreenLeft));
-  const bool moveRight = mappedInput.wasPressed(MappedInputManager::Button::ScreenRight) ||
-                         (repeat && mappedInput.isPressed(MappedInputManager::Button::ScreenRight));
-  if (moveLeft && selected > 0) {
-    selected--;
-    lastHorizontalMoveTime = now;
-    requestUpdate();
-  } else if (moveRight && hasNextWord) {
-    selected++;
-    lastHorizontalMoveTime = now;
+  const int next = selectionGeometry::horizontalIndex(selected, static_cast<int>(words.size()),
+                                                      mappedInput.wasPressed(MappedInputManager::Button::ScreenLeft),
+                                                      mappedInput.wasPressed(MappedInputManager::Button::ScreenRight));
+  if (next != selected) {
+    selected = next;
     requestUpdate();
   } else if (mappedInput.wasPressed(MappedInputManager::Button::ScreenUp)) {
     moveVertical(-1);

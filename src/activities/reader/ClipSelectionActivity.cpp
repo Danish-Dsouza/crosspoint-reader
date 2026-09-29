@@ -23,8 +23,6 @@
 namespace {
 
 constexpr size_t FONT_PREWARM_TEXT_MAX = 2048;
-constexpr unsigned long WORD_REPEAT_START_MS = 500;
-constexpr unsigned long WORD_REPEAT_INTERVAL_MS = 500;
 constexpr int TOUCH_DRAG_MOVEMENT_PX = 4;
 constexpr unsigned long TOUCH_PAGE_ADVANCE_HOLD_MS = 1000;
 constexpr int TOUCH_PAGE_END_DWELL_SLOP_PX = 8;
@@ -149,6 +147,7 @@ bool ClipSelectionActivity::extractWords() {
         word.text = text;
         word.style = style;
         word.paragraphStart = hasEmSpacePrefix(text);
+        word.isRtl = isRtl;
         if (pageText) {
           for (const char* p = text; *p != '\0' && pageTextLength + 1 < FONT_PREWARM_TEXT_MAX; ++p) {
             pageText[pageTextLength++] = *p;
@@ -520,19 +519,11 @@ void ClipSelectionActivity::loop() {
     return;
   }
 
-  const unsigned long now = millis();
-  const bool repeat =
-      mappedInput.getHeldTime() >= WORD_REPEAT_START_MS && now - lastHorizontalMoveTime >= WORD_REPEAT_INTERVAL_MS;
-  const bool moveLeft = mappedInput.wasPressed(MappedInputManager::Button::ScreenLeft) ||
-                        (repeat && mappedInput.isPressed(MappedInputManager::Button::ScreenLeft));
-  const bool moveRight = mappedInput.wasPressed(MappedInputManager::Button::ScreenRight) ||
-                         (repeat && mappedInput.isPressed(MappedInputManager::Button::ScreenRight));
-  if (moveLeft && selected > 0) {
-    selectIndex(selected - 1);
-    lastHorizontalMoveTime = now;
-  } else if (moveRight && selected + 1 < static_cast<int>(wordCount)) {
-    selectIndex(selected + 1);
-    lastHorizontalMoveTime = now;
+  const int next = selectionGeometry::horizontalIndex(
+      selected, static_cast<int>(wordCount), mappedInput.wasPressed(MappedInputManager::Button::ScreenLeft),
+      mappedInput.wasPressed(MappedInputManager::Button::ScreenRight), words[selected].isRtl);
+  if (next != selected) {
+    selectIndex(next);
   } else if (mappedInput.wasPressed(MappedInputManager::Button::ScreenUp)) {
     moveVertical(-1);
   } else if (mappedInput.wasPressed(MappedInputManager::Button::ScreenDown)) {
