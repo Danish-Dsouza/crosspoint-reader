@@ -91,15 +91,15 @@ bool decode(JsonObjectConst item, Clipping& clipping, std::string& text, bool& d
   if (!item["deleted"].is<unsigned>() || item["deleted"].as<unsigned>() > 1) return false;
   deleted = item["deleted"].as<unsigned>() == 1;
   if (deleted) return true;
-  if (!item["revision"].is<uint64_t>() || !item["spine"].is<uint16_t>() ||
-      !item["start_page"].is<uint16_t>() || !item["end_page"].is<uint16_t>() ||
-      !item["pages"].is<uint16_t>() || !item["start_word"].is<uint16_t>() ||
-      !item["end_word"].is<uint16_t>() || !item["words"].is<uint16_t>() ||
-      !item["created_at"].is<uint32_t>() || !item["layout_signature"].is<uint32_t>()) return false;
+  if (!item["revision"].is<uint64_t>() || !item["spine"].is<uint16_t>() || !item["start_page"].is<uint16_t>() ||
+      !item["end_page"].is<uint16_t>() || !item["pages"].is<uint16_t>() || !item["start_word"].is<uint16_t>() ||
+      !item["end_word"].is<uint16_t>() || !item["words"].is<uint16_t>() || !item["created_at"].is<uint32_t>() ||
+      !item["layout_signature"].is<uint32_t>())
+    return false;
   if (!item["para"].isNull() && !item["para"].is<uint16_t>()) return false;
   const JsonString quote = item["text"].as<JsonString>();
-  if (quote.isNull() || quote.size() == 0 || quote.size() > CLIPPING_TEXT_MAX ||
-      strlen(quote.c_str()) != quote.size()) return false;
+  if (quote.isNull() || quote.size() == 0 || quote.size() > CLIPPING_TEXT_MAX || strlen(quote.c_str()) != quote.size())
+    return false;
   clipping.spineIndex = item["spine"];
   clipping.startPage = item["start_page"];
   clipping.endPage = item["end_page"];
@@ -179,7 +179,8 @@ bool clippingSync::run(const std::string& bookPath, const std::string& documentH
   // ponytail: rescan one book per manual sync; persist an account-scoped cursor if histories grow large.
   uint64_t cursor = 0;
   do {
-    if (!request(*http, url + "?limit=1&format=reader&cursor=" + std::to_string(cursor), buffer.get(), doc)) return false;
+    if (!request(*http, url + "?limit=1&format=reader&cursor=" + std::to_string(cursor), buffer.get(), doc))
+      return false;
     if (!doc["cursor"].is<uint64_t>() || !doc["more"].is<bool>() || !doc["items"].is<JsonArray>()) return false;
     const uint64_t next = doc["cursor"];
     const JsonArrayConst items = doc["items"].as<JsonArrayConst>();
