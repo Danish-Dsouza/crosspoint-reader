@@ -143,7 +143,6 @@ bool ClipSelectionActivity::extractWords() {
     return false;
   }
   rowCount = 0;
-  uint16_t pageWordIndex = 0;
   const bool needsFontPrewarm = renderer.isSdCardFont(fontId);
   auto pageText = needsFontPrewarm ? makeUniqueNoThrow<char[]>(FONT_PREWARM_TEXT_MAX) : nullptr;
   size_t pageTextLength = 0;
@@ -151,7 +150,7 @@ bool ClipSelectionActivity::extractWords() {
   uint8_t styleMask = 0;
 
   for (size_t pageOffset = 0; pageOffset < pages.size(); ++pageOffset) {
-    pageWordIndex = 0;
+    uint16_t pageWordIndex = 0;
     for (const auto& element : pages[pageOffset]->elements) {
       if (element->getTag() != TAG_PageLine) continue;
       const auto& line = static_cast<const PageLine&>(*element);
