@@ -28,6 +28,8 @@ constexpr unsigned long WORD_REPEAT_INTERVAL_MS = 500;
 constexpr int TOUCH_DRAG_MOVEMENT_PX = 4;
 constexpr unsigned long TOUCH_PAGE_ADVANCE_HOLD_MS = 1000;
 constexpr int TOUCH_PAGE_END_DWELL_SLOP_PX = 8;
+constexpr ClippingResult::Action SELECTION_ACTIONS[] = {ClippingResult::Action::Lookup, ClippingResult::Action::Clip,
+                                                        ClippingResult::Action::Bookmark};
 
 bool hasVisibleText(const char* text) {
   if (!text) return false;
@@ -428,6 +430,7 @@ bool ClipSelectionActivity::handleHomeGesture() {
 void ClipSelectionActivity::loop() {
   RenderLock lock;
   if (wordCount == 0) return;
+  if (actionPopup.handleInput(mappedInput, [this] { requestUpdate(); })) return;
 
   int touchX = 0;
   int touchY = 0;
@@ -440,9 +443,7 @@ void ClipSelectionActivity::loop() {
       const int action =
           selectionGeometry::actionAt(actionRect(), UITheme::getInstance().getMetrics().menuSpacing, touchX, touchY);
       if (action >= 0) {
-        static constexpr ClippingResult::Action ACTIONS[] = {
-            ClippingResult::Action::Lookup, ClippingResult::Action::Clip, ClippingResult::Action::Bookmark};
-        confirmSelection(ACTIONS[action]);
+        confirmSelection(SELECTION_ACTIONS[action]);
         return;
       }
       const int first = std::min(rangeStart, selected);
@@ -555,7 +556,14 @@ void ClipSelectionActivity::loop() {
   }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-    confirmSelection();
+    if (rangeStart >= 0 && !mappedInput.hasTouch()) {
+      static constexpr StrId OPTIONS[] = {StrId::STR_LOOKUP, StrId::STR_CLIP, StrId::STR_BOOKMARK_OPTION};
+      actionPopup.show(StrId::STR_SELECT, OPTIONS, 3, 0,
+                       [this](const int index) { confirmSelection(SELECTION_ACTIONS[index]); });
+      requestUpdate();
+    } else {
+      confirmSelection();
+    }
     return;
   }
 
@@ -664,6 +672,7 @@ void ClipSelectionActivity::drawSelection() const {
 }
 
 void ClipSelectionActivity::render(RenderLock&&) {
+  if (actionPopup.processRender(renderer, mappedInput)) return;
   const int offset = textOffset();
   renderer.clearScreen();
   auto* fcm = renderer.getFontCacheManager();
@@ -673,8 +682,9 @@ void ClipSelectionActivity::render(RenderLock&&) {
   pages[currentPageOffset]->render(renderer, fontId, marginLeft, marginTop + offset);
   if (wordCount != 0) drawSelection();
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), rangeStart < 0 ? tr(STR_SELECT) : tr(STR_DONE),
-                                            tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT));
+  const auto labels =
+      mappedInput.mapLabels(tr(STR_BACK), rangeStart < 0 || !mappedInput.hasTouch() ? tr(STR_SELECT) : tr(STR_DONE),
+                            tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   renderer.displayBuffer();
 }

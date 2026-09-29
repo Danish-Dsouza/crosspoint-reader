@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "activities/Activity.h"
+#include "components/OptionPopup.h"
 #include "components/themes/BaseTheme.h"
 
 class ClipSelectionActivity final : public Activity {
@@ -65,6 +66,7 @@ class ClipSelectionActivity final : public Activity {
   const int marginTop;
   const int initialX;
   const int initialY;
+  OptionPopup actionPopup;
   int fontId = 0;
   int lineHeight = 0;
   std::unique_ptr<WordBox[]> words;
