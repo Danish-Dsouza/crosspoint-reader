@@ -140,6 +140,12 @@ void catalogDownloadScreen(UiAppHost::UiScreen& screen, const char* status, cons
     fui::ButtonProps cancel;
     cancel.label = tr(STR_CANCEL);
     cancel.action = cancelAction;
+    // Themed button with an outline and the theme's control rounding, same
+    // as the publication page's acquire button.
+    cancel.styles = screen.theme().button;
+    cancel.styles.normal.border = fui::Paint::solid(fui::Color::Black);
+    cancel.styles.normal.borderWidth = 1;
+    cancel.radius = screen.theme().controlRadius;
     screen.button(cancel,
                   fui::Rect{static_cast<int16_t>(btnArea.x + (btnArea.width - btnW) / 2), btnArea.y, btnW, btnH});
   }

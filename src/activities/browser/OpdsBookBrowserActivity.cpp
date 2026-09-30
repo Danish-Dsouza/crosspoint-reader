@@ -566,10 +566,12 @@ void OpdsBookBrowserActivity::openPublicationDetail(const OpdsEntry& entry) {
     if (entry.purchase) currentPublication.price = entry.detail;
     currentPublication.valid = !entry.title.empty();
   }
-  // OPDS 1.x has no per-publication document; the feed-inline summary/content
-  // is the only description source. Also fills the gap when a publication doc
-  // exists but carries no description of its own.
+  // Feed-inline fallbacks: without a publication self document (OPDS 1.x, or
+  // OPDS 2.0 servers like Mayberry that inline everything) the feed entry is
+  // the only source for the description and cover. Also fills gaps when a
+  // document exists but omits one of them.
   if (currentPublication.description.empty()) currentPublication.description = entry.description;
+  if (currentPublication.coverHref.empty()) currentPublication.coverHref = entry.coverHref;
 
   // Resolve the acquisition to an absolute URL against the document it came
   // from; downloadBook() resolves against the feed, so an absolute URL is used
@@ -723,12 +725,12 @@ void OpdsBookBrowserActivity::buildDetailScreen(UiScreen& screen) {
   props.bodyText = theme.bodyText;
   props.primary.label = acquireLabel();
   props.primary.action = ACTION_DETAIL;
-  // Same base styling and theme rounding as every themed button in the app
-  // (controlRadius: RoundedRaff pill, Classic square); the primary action
-  // keeps its filled emphasis over theme.button's plain normal state.
+  // Same styling and theme rounding as every themed button in the app
+  // (controlRadius: RoundedRaff pill, Classic square), plus an outline so
+  // the resting state reads as a button against the page.
   props.primary.styles = theme.button;
-  props.primary.styles.normal.background = fui::Paint::solid(fui::Color::Black);
-  props.primary.styles.normal.foreground = fui::Paint::solid(fui::Color::White);
+  props.primary.styles.normal.border = fui::Paint::solid(fui::Color::Black);
+  props.primary.styles.normal.borderWidth = 1;
   props.primary.text = theme.bodyText;
   props.primary.radius = theme.controlRadius;
   props.primary.minTouchSize = theme.minTouchSize;
