@@ -56,6 +56,9 @@ class OpdsBookBrowserActivity final : public CatalogActivity {
   }
   // Title of the current feed (shown in the header when no search is active).
   std::string feedTitle;
+  // Feed-reported pagination ("Page N of M" between the arrows); 0 = unknown.
+  int pageCurrent = 0;
+  int pageTotal = 0;
   void setSearchQuery(const std::string& query);
   // Publication detail page (DETAIL state): the parsed self-document, the book
   // to acquire, and the availability/metadata lines the publication-page

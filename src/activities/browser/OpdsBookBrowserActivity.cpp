@@ -102,15 +102,22 @@ bool OpdsBookBrowserActivity::handleCustomInput() {
     // button routes through the shared touch pass (ACTION_DETAIL).
     return false;
   }
-  if (state == State::BROWSING) {
-    // Side page-turn buttons follow the feed's pagination links, the natural
-    // e-reader mapping now that the Next/Previous rows are a touch tab bar.
-    if (mappedInput.wasReleased(MappedInputManager::Button::PageForward) && !pageNextHref.empty()) {
-      followPageLink(pageNextHref);
+  if (state == State::BROWSING &&
+      (!pageNextHref.empty() || !pagePrevHref.empty() || !pageFirstHref.empty() || !pageLastHref.empty())) {
+    // On a paginated feed the side buttons belong to feed pages exclusively.
+    // NavNext/NavPrevious resolve to the side buttons too, so every side
+    // press/hold pass is swallowed here or the shared list nav would also
+    // step the selection under the same physical button.
+    if (mappedInput.wasReleased(MappedInputManager::Button::PageForward)) {
+      if (!pageNextHref.empty()) followPageLink(pageNextHref);
       return true;
     }
-    if (mappedInput.wasReleased(MappedInputManager::Button::PageBack) && !pagePrevHref.empty()) {
-      followPageLink(pagePrevHref);
+    if (mappedInput.wasReleased(MappedInputManager::Button::PageBack)) {
+      if (!pagePrevHref.empty()) followPageLink(pagePrevHref);
+      return true;
+    }
+    if (mappedInput.isPressed(MappedInputManager::Button::PageForward) ||
+        mappedInput.isPressed(MappedInputManager::Button::PageBack)) {
       return true;
     }
   }
@@ -176,20 +183,21 @@ void OpdsBookBrowserActivity::buildScreen(UiScreen& screen) {
 // last links. Prev and Next always show when the feed is paginated (the
 // unavailable direction is disabled); First/Last appear only when advertised.
 void OpdsBookBrowserActivity::buildPaginationBar(UiScreen& screen) {
-  constexpr int MAX_PAGE_TABS = 4;
-  fui::TabItem tabs[MAX_PAGE_TABS];
-  int count = 0;
-  const auto addTab = [&](const freeink::Icon& icon, const int16_t value, const std::string& href) {
-    if (count >= MAX_PAGE_TABS) return;
+  // Backward arrows on the left, forward arrows on the right, "Page N of M"
+  // between them when the feed reports its pagination.
+  fui::TabItem left[2], right[2];
+  int lc = 0, rc = 0;
+  const auto addTab = [](fui::TabItem* tabs, int& count, const freeink::Icon& icon, const int16_t value,
+                         const std::string& href) {
     tabs[count].icon = fui::bitmapFromIcon(icon);
     tabs[count].value = value;
     tabs[count].enabled = !href.empty();
     ++count;
   };
-  if (!pageFirstHref.empty()) addTab(icon_page_first_32, PAGE_FIRST, pageFirstHref);
-  addTab(icon_page_prev_32, PAGE_PREV, pagePrevHref);
-  addTab(icon_page_next_32, PAGE_NEXT, pageNextHref);
-  if (!pageLastHref.empty()) addTab(icon_page_last_32, PAGE_LAST, pageLastHref);
+  if (!pageFirstHref.empty()) addTab(left, lc, icon_page_first_32, PAGE_FIRST, pageFirstHref);
+  addTab(left, lc, icon_page_prev_32, PAGE_PREV, pagePrevHref);
+  addTab(right, rc, icon_page_next_32, PAGE_NEXT, pageNextHref);
+  if (!pageLastHref.empty()) addTab(right, rc, icon_page_last_32, PAGE_LAST, pageLastHref);
 
   const auto& metrics = UITheme::getInstance().getMetrics();
   const fui::Rect band = screen.takeBottom(static_cast<int16_t>(metrics.tabBarHeight));
@@ -198,16 +206,32 @@ void OpdsBookBrowserActivity::buildPaginationBar(UiScreen& screen) {
   const fui::Rect barRect{frameRect.x, band.y, frameRect.width, band.height};
   screen.target().fill(fui::Rect{barRect.x, barRect.y, barRect.width, 1}, fui::Paint::solid(fui::Color::Black));
 
+  const auto side = static_cast<int16_t>(metrics.contentSidePadding);
+  const int16_t zoneW = static_cast<int16_t>((barRect.width - 2 * side) / 3);
+  const int16_t slotY = static_cast<int16_t>(barRect.y + 1);
+  const int16_t slotH = static_cast<int16_t>(barRect.height - 1);
   fui::TabBarProps props;
-  props.tabs = tabs;
-  props.count = static_cast<uint16_t>(count);
   props.action = ACTION_PAGE;
   props.inputMask = fui::InputTouch;
   props.iconSize = 32;
-  const auto side = static_cast<int16_t>(metrics.contentSidePadding);
-  const fui::Rect slots{static_cast<int16_t>(barRect.x + side), static_cast<int16_t>(barRect.y + 1),
-                        static_cast<int16_t>(barRect.width - 2 * side), static_cast<int16_t>(barRect.height - 1)};
-  fui::tabBar(screen.frame(), slots, props);
+  props.tabs = left;
+  props.count = static_cast<uint16_t>(lc);
+  fui::tabBar(screen.frame(), fui::Rect{static_cast<int16_t>(barRect.x + side), slotY, zoneW, slotH}, props);
+  props.tabs = right;
+  props.count = static_cast<uint16_t>(rc);
+  fui::tabBar(screen.frame(), fui::Rect{static_cast<int16_t>(barRect.right() - side - zoneW), slotY, zoneW, slotH},
+              props);
+
+  if (pageCurrent > 0 && pageTotal > 0) {
+    char pageText[32];
+    snprintf(pageText, sizeof(pageText), "%d/%d", pageCurrent, pageTotal);
+    fui::TextStyle centered = screen.theme().smallText;
+    centered.align = fui::TextAlign::Center;
+    const int16_t lh = screen.target().lineHeight(centered.font);
+    screen.target().text(fui::Rect{static_cast<int16_t>(barRect.x + side + zoneW),
+                                   static_cast<int16_t>(slotY + (slotH - lh) / 2), zoneW, lh},
+                         pageText, centered);
+  }
 }
 
 void OpdsBookBrowserActivity::buildBrowsingScreen(UiScreen& screen) {
@@ -330,6 +354,8 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
   pageLastHref = (!parser.getLastPageUrl().empty() && !nextUrl.empty() && parser.getLastPageUrl() != nextUrl)
                      ? parser.getLastPageUrl()
                      : "";
+  pageCurrent = parser.currentPage();
+  pageTotal = parser.pageCount();
   const bool feedTruncated = parser.truncated();
   // Reset the selection before the swap: the render task reads the selected
   // entry under only an empty() guard, and the new feed can be shorter than
