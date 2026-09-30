@@ -723,6 +723,15 @@ void OpdsBookBrowserActivity::buildDetailScreen(UiScreen& screen) {
   props.bodyText = theme.bodyText;
   props.primary.label = acquireLabel();
   props.primary.action = ACTION_DETAIL;
+  // Same base styling and theme rounding as every themed button in the app
+  // (controlRadius: RoundedRaff pill, Classic square); the primary action
+  // keeps its filled emphasis over theme.button's plain normal state.
+  props.primary.styles = theme.button;
+  props.primary.styles.normal.background = fui::Paint::solid(fui::Color::Black);
+  props.primary.styles.normal.foreground = fui::Paint::solid(fui::Color::White);
+  props.primary.text = theme.bodyText;
+  props.primary.radius = theme.controlRadius;
+  props.primary.minTouchSize = theme.minTouchSize;
   props.actionHeight = theme.rowHeight;
 
   fui::publicationPage(screen.frame(), screen.body(), props);
