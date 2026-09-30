@@ -20,6 +20,10 @@ constexpr int HTTP_TIMEOUT_MS = 60000;
 
 constexpr int MAX_REDIRECTS = 5;
 
+// postForm response cap: token responses are small JSON; a misbehaving server
+// must not balloon the heap.
+constexpr size_t MAX_RESPONSE_BYTES = 4096;
+
 void applyCommonClientSetup(freeink::SecureHttpClient& http) {
   http.setTimeout(HTTP_TIMEOUT_MS);
   http.setInsecure();
@@ -159,9 +163,6 @@ bool HttpDownloader::postForm(const std::string& url, const std::string& formBod
   }
   applyCommonClientSetup(http);
   http.addHeader("Content-Type", "application/x-www-form-urlencoded");
-  // Token responses are small JSON; cap the capture so a misbehaving server
-  // can't balloon the heap.
-  constexpr size_t MAX_RESPONSE_BYTES = 4096;
   LOG_DBG("HTTP", "wolfSSL POST: %s", url.c_str());
   const int status = http.sendRequest("POST", reinterpret_cast<const uint8_t*>(formBody.data()), formBody.size(),
                                       [&outResponse](const uint8_t* data, size_t len) {
