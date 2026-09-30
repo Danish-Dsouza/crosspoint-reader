@@ -30,12 +30,10 @@ constexpr size_t NAME_BUFFER_SIZE = 500;
 
 std::string getBookCachePath(const std::string& path) {
   const char* prefix = nullptr;
-  if (FsHelpers::hasEpubExtension(path)) {
+  if (FsHelpers::hasReflowableBookExtension(path)) {
     prefix = "epub_";
   } else if (FsHelpers::hasXtcExtension(path)) {
     prefix = "xtc_";
-  } else if (FsHelpers::hasTxtExtension(path) || FsHelpers::hasMarkdownExtension(path)) {
-    prefix = "txt_";
   } else {
     return "";
   }
@@ -73,6 +71,8 @@ void formatFileName(const std::string& filename, char* buffer, const size_t buff
   const int length = static_cast<int>(dot == std::string::npos ? filename.size() : dot);
   const char* format = isDirectory && !UITheme::getInstance().getTheme().showsFileIcons() ? "[%.*s]" : "%.*s";
   snprintf(buffer, bufferSize, format, length, filename.c_str());
+  // Compose only the display copy; filesystem lookup needs the raw entry bytes.
+  utf8ComposeNfcInPlace(buffer);
 }
 
 void formatFileExtension(const std::string& filename, char* buffer, const size_t bufferSize) {
@@ -130,8 +130,7 @@ void FileBrowserActivity::loadFiles() {
         if (FsHelpers::checkFileExtension(filename, ".bin")) {
           files.emplace_back(filename);
         }
-      } else if (FsHelpers::hasEpubExtension(filename) || FsHelpers::hasXtcExtension(filename) ||
-                 FsHelpers::hasTxtExtension(filename) || FsHelpers::hasMarkdownExtension(filename) ||
+      } else if (FsHelpers::hasReflowableBookExtension(filename) || FsHelpers::hasXtcExtension(filename) ||
                  FsHelpers::hasBmpExtension(filename) || FsHelpers::hasPngExtension(filename)) {
         files.emplace_back(filename);
       }
@@ -477,9 +476,9 @@ void FileBrowserActivity::renameSelectedFile(const std::string& oldPath, const s
 
   const std::string oldCachePath = getBookCachePath(oldPath);
   const std::string newCachePath = getBookCachePath(newPath);
-  const bool isEpub = FsHelpers::hasEpubExtension(oldPath);
-  const std::string oldBookmarkPath = isEpub ? BookmarkUtil::getBookmarkPath(oldPath) : "";
-  const std::string newBookmarkPath = isEpub ? BookmarkUtil::getBookmarkPath(newPath) : "";
+  const bool hasBookmarks = FsHelpers::hasReflowableBookExtension(oldPath);
+  const std::string oldBookmarkPath = hasBookmarks ? BookmarkUtil::getBookmarkPath(oldPath) : "";
+  const std::string newBookmarkPath = hasBookmarks ? BookmarkUtil::getBookmarkPath(newPath) : "";
   bool cacheMoved = false;
   bool bookmarksMoved = false;
   if (!moveStatePath(oldCachePath, newCachePath, cacheMoved)) return;

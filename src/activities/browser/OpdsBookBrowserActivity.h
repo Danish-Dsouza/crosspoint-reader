@@ -8,29 +8,25 @@
 #include <vector>
 
 #include "OpdsServerStore.h"
-#include "activities/Activity.h"
-#include "components/UiAppHost.h"
+#include "activities/CatalogActivity.h"
 #include "network/OpdsHttpTransport.h"
-#include "util/ButtonNavigator.h"
 
 /**
  * Activity for browsing and downloading books from an OPDS server.
  * Supports navigation through catalog hierarchy and downloading EPUBs.
  */
-class OpdsBookBrowserActivity final : public Activity, private UiAppHost {
+class OpdsBookBrowserActivity final : public CatalogActivity {
  public:
-  enum class BrowserState { CHECK_WIFI, WIFI_SELECTION, LOADING, BROWSING, DETAIL, DOWNLOADING, ERROR, SEARCH_INPUT };
-
   explicit OpdsBookBrowserActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, OpdsServer server);
 
   void onEnter() override;
   void onExit() override;
-  void loop() override;
-  void render(RenderLock&&) override;
 
  private:
-  ButtonNavigator buttonNavigator;
-  BrowserState state = BrowserState::LOADING;
+  // Subclass actions after the base's ACTION_SEARCH/ACTION_CANCEL.
+  static constexpr freeink::ui::ActionId ACTION_PAGE = ACTION_USER + 2;
+  static constexpr freeink::ui::ActionId ACTION_DETAIL = ACTION_USER + 3;
+
   std::vector<OpdsEntry> entries;
   // Row buffer, built whenever entries changes (fetchFeed()/releaseEntries())
   // so buildBrowsingScreen() reuses it on every repaint instead of rebuilding
@@ -72,8 +68,8 @@ class OpdsBookBrowserActivity final : public Activity, private UiAppHost {
   std::string detailMetadata;  // publisher / price, when present
   // Book cover for the detail page: downloaded to an SD temp in
   // openPublicationDetail, its rect captured by detailCoverPainter during
-  // layout, then decoded into the framebuffer at the end of render() (kept off
-  // the deep component call chain).
+  // layout, then decoded into the framebuffer in drawFooter() (the last hook
+  // before displayBuffer, kept off the deep component call chain).
   std::string detailCoverPath;
   bool detailCoverReady = false;
   freeink::ui::Rect detailCoverRect{};
@@ -86,11 +82,6 @@ class OpdsBookBrowserActivity final : public Activity, private UiAppHost {
   // Base URL the template is relative to: the OpenSearch description URL, or
   // empty when the template came from the feed itself (resolve against feed).
   std::string searchTemplateBase;
-  int selectorIndex = 0;
-  std::string errorMessage;
-  std::string statusMessage;
-  size_t downloadProgress = 0;
-  size_t downloadTotal = 0;
 
   OpdsServer server;  // Copied at construction — safe even if the store changes during browsing
 
@@ -101,24 +92,21 @@ class OpdsBookBrowserActivity final : public Activity, private UiAppHost {
   OpdsHttpTransport opdsTransport;
   freeink::opds::OpdsClient opdsClient{opdsTransport};
 
-  // Viewport memory (top/visibleRows) for the browsing list; `selected` is
-  // mirrored from selectorIndex at build/move time.
-  freeink::ui::ListNav listNav;
-  // Read by HttpDownloader between chunks; set by the Cancel button handler or
-  // a Back press, both pumped from the download's progress callback.
-  bool cancelDownload = false;
-  // Set when the cancel came from the home gesture (consumed by the download
-  // callback's own input pump); exit to home after the abort unwinds.
-  bool goHomeAfterCancel = false;
+  // --- CatalogActivity / UiListActivity contract -----------------------------
+  int listCount() const override { return state == State::BROWSING ? static_cast<int>(entries.size()) : 0; }
+  bool hasSearch() const override { return !searchTemplate.empty() || !searchDescriptionUrl.empty(); }
+  std::string searchPrefill() const override { return searchQuery; }
+  void activateIndex(int index) override;
+  void buildScreen(UiScreen& screen) override;
+  void drawFooter() override;
+  void startBrowse() override;
+  void downloadFinished(bool cancelled) override;
+  void performSearch(const std::string& query) override;
+  void onBackButton() override;
+  // DETAIL-state buttons and the pagination side buttons; everything else
+  // falls through to the shared catalog input handling.
+  bool handleCustomInput() override;
 
-  // Single screen fn dispatching on `state`: every state shares the themed
-  // header and gets built through FreeInkUI.
-  static void rootScreen(UiScreen& screen, void* user);
-  static void onRowEvent(const freeink::ui::ActionEvent& event, void* user);
-  static void onSearchEvent(const freeink::ui::ActionEvent& event, void* user);
-  static void onCancelEvent(const freeink::ui::ActionEvent& event, void* user);
-  static void onPageEvent(const freeink::ui::ActionEvent& event, void* user);
-  void screenHeader(UiScreen& screen, bool withSearch);
   // Bottom pagination tab bar (arrow icons); drawn only when the feed
   // advertises next/previous/first/last links.
   void buildPaginationBar(UiScreen& screen);
@@ -127,13 +115,9 @@ class OpdsBookBrowserActivity final : public Activity, private UiAppHost {
   }
   void followPageLink(const std::string& href);
   void buildBrowsingScreen(UiScreen& screen);
-  void buildDownloadScreen(UiScreen& screen);
-  void buildStatusScreen(UiScreen& screen);
-  void activateSelected();
+  static void onPageEvent(const freeink::ui::ActionEvent& event, void* user);
+  static void onDetailEvent(const freeink::ui::ActionEvent& event, void* user);
 
-  void checkAndConnectWifi();
-  void launchWifiSelection();
-  void onWifiSelectionComplete(bool connected);
   void fetchFeed(const std::string& path);
   void releaseEntries();
   void navigateToEntry(const OpdsEntry& entry);
@@ -145,15 +129,13 @@ class OpdsBookBrowserActivity final : public Activity, private UiAppHost {
   // Download the publication's cover art to an SD temp for the detail page.
   void loadDetailCover(const std::string& docUrl);
   // Cover painter passed to the publication component: records the cover rect
-  // (the actual decode runs at the end of render(), not in this deep call).
+  // (the actual decode runs in drawFooter(), not in this deep call).
   static bool detailCoverPainter(freeink::ui::DrawTarget& target, freeink::ui::Rect rect,
                                  const freeink::ui::PublicationHeaderProps& props, void* user);
   // Label for the detail-page acquire button (and its button hint): Buy for a
   // purchase, Place Hold for a borrowable title with no copies available,
   // otherwise Borrow (library loan) or Download (direct file).
   const char* acquireLabel() const;
-  static void onDetailEvent(const freeink::ui::ActionEvent& event, void* user);
-  bool hasSearch() const { return !searchTemplate.empty() || !searchDescriptionUrl.empty(); }
   bool ensureSearchTemplate();
   // Client status hook: reflect the login phase in the status line.
   static void onClientStatus(void* ctx, freeink::opds::ClientPhase phase);
@@ -163,7 +145,4 @@ class OpdsBookBrowserActivity final : public Activity, private UiAppHost {
   // Token-store key: URL plus username, so two accounts on the same server
   // keep separate tokens. \x1f (unit separator) can't appear in either field.
   std::string tokenKey() const { return server.url + '\x1f' + server.username; }
-  void launchSearch();
-  void performSearch(const std::string& query);
-  bool preventAutoSleep() override;
 };
