@@ -163,13 +163,13 @@ bool HttpDownloader::postForm(const std::string& url, const std::string& formBod
   // can't balloon the heap.
   constexpr size_t MAX_RESPONSE_BYTES = 4096;
   LOG_DBG("HTTP", "wolfSSL POST: %s", url.c_str());
-  const int status =
-      http.sendRequest("POST", reinterpret_cast<const uint8_t*>(formBody.data()), formBody.size(),
-                       [&outResponse](const uint8_t* data, size_t len) {
-                         const size_t room = MAX_RESPONSE_BYTES - std::min(outResponse.size(), MAX_RESPONSE_BYTES);
-                         outResponse.append(reinterpret_cast<const char*>(data), std::min(len, room));
-                         return true;
-                       });
+  const int status = http.sendRequest("POST", reinterpret_cast<const uint8_t*>(formBody.data()), formBody.size(),
+                                      [&outResponse](const uint8_t* data, size_t len) {
+                                        const size_t room =
+                                            MAX_RESPONSE_BYTES - std::min(outResponse.size(), MAX_RESPONSE_BYTES);
+                                        outResponse.append(reinterpret_cast<const char*>(data), std::min(len, room));
+                                        return true;
+                                      });
   if (statusOut) *statusOut = status > 0 ? status : 0;
   return status >= 200 && status < 300;
 }
