@@ -156,10 +156,6 @@ void OpdsBookBrowserActivity::setSearchQuery(const std::string& query) {
 }
 
 void OpdsBookBrowserActivity::buildScreen(UiScreen& screen) {
-  if (state == State::DETAIL) {
-    buildDetailScreen(screen);
-    return;
-  }
   // An active search replaces the server name with the quoted query, like the
   // library view, so the reader can see what produced the current list. With
   // no search, a navigated feed's own title beats the server name.
@@ -168,6 +164,10 @@ void OpdsBookBrowserActivity::buildScreen(UiScreen& screen) {
                       : server.name.empty()      ? tr(STR_OPDS_BROWSER)
                                                  : server.name.c_str();
   screenHeader(screen, title);
+  if (state == State::DETAIL) {
+    buildDetailScreen(screen);
+    return;
+  }
   if (buildStatusScreen(screen, /*boldError=*/false, /*showDownloadTotal=*/true)) return;
   buildBrowsingScreen(screen);
 }
@@ -566,6 +566,10 @@ void OpdsBookBrowserActivity::openPublicationDetail(const OpdsEntry& entry) {
     if (entry.purchase) currentPublication.price = entry.detail;
     currentPublication.valid = !entry.title.empty();
   }
+  // OPDS 1.x has no per-publication document; the feed-inline summary/content
+  // is the only description source. Also fills the gap when a publication doc
+  // exists but carries no description of its own.
+  if (currentPublication.description.empty()) currentPublication.description = entry.description;
 
   // Resolve the acquisition to an absolute URL against the document it came
   // from; downloadBook() resolves against the feed, so an absolute URL is used
@@ -629,6 +633,13 @@ void OpdsBookBrowserActivity::loadDetailCover(const std::string& docUrl) {
 bool OpdsBookBrowserActivity::detailCoverPainter(fui::DrawTarget&, fui::Rect rect, const fui::PublicationHeaderProps&,
                                                  void* user) {
   auto* self = static_cast<OpdsBookBrowserActivity*>(user);
+  if (!self->detailCoverReady) {
+    // No cover art: the same placeholder the home screen draws (cheap, so it
+    // can run right here, unlike the JPEG decode).
+    GUI.drawCoverPlaceholder(self->renderer, Rect{rect.x, rect.y, rect.width, rect.height});
+    self->detailCoverRect = fui::Rect{};
+    return true;
+  }
   // Record the rect only; the decode runs in drawFooter() to keep the JPEG
   // decoder off this deep component call chain.
   self->detailCoverRect = rect;
@@ -686,24 +697,18 @@ const char* OpdsBookBrowserActivity::acquireLabel() const {
 }
 
 void OpdsBookBrowserActivity::buildDetailScreen(UiScreen& screen) {
-  const auto& metrics = UITheme::getInstance().getMetrics();
-  // No header: the publication component leads with the book's own title and
-  // cover, so a separate title bar adds nothing. Reserve only the hardware
-  // button-hint band so the acquire button clears it.
-  screen.takeBottom(static_cast<int16_t>(metrics.buttonHintsHeight));
-
+  // Content band comes from screenHeader() (header above, button hints
+  // below), same as every other state.
   const auto& theme = screen.theme();
   const auto asPtr = [](const std::string& s) { return s.empty() ? nullptr : s.c_str(); };
 
   fui::PublicationPageProps props;
   props.book.title = asPtr(currentPublication.title);
   props.book.author = asPtr(currentPublication.author);
-  // When a cover was downloaded, the painter reserves its rect and drawFooter()
-  // decodes into it; otherwise the component draws its typeset placeholder.
-  if (detailCoverReady) {
-    props.book.coverPainter = &OpdsBookBrowserActivity::detailCoverPainter;
-    props.book.coverPainterUserData = this;
-  }
+  // Downloaded cover: the painter reserves its rect and drawFooter() decodes
+  // into it. No cover: the painter draws the home screen's placeholder.
+  props.book.coverPainter = &OpdsBookBrowserActivity::detailCoverPainter;
+  props.book.coverPainterUserData = this;
   props.book.titleText = theme.bodyText;
   props.book.detailText = theme.bodyText;
   props.availability.status = asPtr(detailStatus);
