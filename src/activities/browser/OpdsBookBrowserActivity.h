@@ -110,9 +110,6 @@ class OpdsBookBrowserActivity final : public CatalogActivity {
   // Bottom pagination tab bar (arrow icons); drawn only when the feed
   // advertises next/previous/first/last links.
   void buildPaginationBar(UiScreen& screen);
-  bool hasPagination() const {
-    return !pageNextHref.empty() || !pagePrevHref.empty() || !pageFirstHref.empty() || !pageLastHref.empty();
-  }
   void followPageLink(const std::string& href);
   void buildBrowsingScreen(UiScreen& screen);
   static void onPageEvent(const freeink::ui::ActionEvent& event, void* user);

@@ -33,10 +33,6 @@ void applyCommonClientSetup(freeink::SecureHttpClient& http) {
   http.setUserAgent("CrossPoint-ESP32-" CROSSPOINT_VERSION);
 }
 
-bool isRedirectStatus(const int status) {
-  return status == 301 || status == 302 || status == 303 || status == 307 || status == 308;
-}
-
 // All HTTP(S) fetches go through wolfSSL (the firmware's only TLS stack: it
 // speaks TLS 1.3 and reads large bodies reliably). Plain-http URLs still use a
 // WiFiClient here, so this is safe for non-TLS targets too. A body cut short
@@ -140,7 +136,7 @@ bool HttpDownloader::fetchUrl(const std::string& url, const DataCallback& onData
       }
       return true;
     });
-    if (isRedirectStatus(status)) {
+    if (status == 301 || status == 302 || status == 303 || status == 307 || status == 308) {
       const std::string location = http.getHeader("location");
       if (location.empty() || !freeink::SecureHttpClient::resolveUrl(current, location, current)) break;
       continue;

@@ -34,6 +34,10 @@ void catalogScreenHeader(UiAppHost::UiScreen& screen, const GfxRenderer& rendere
     static constexpr fui::ActionId PAINT_ONLY_BACK = 0xFFFF;
     header.leadingIcon = fui::bitmapFromIcon(icon_header_back_32);
     header.leadingAction = PAINT_ONLY_BACK;
+    // Every state identical, like the trailing icon: no filled active box,
+    // and a tap flash (never cleared, since no handler owns this action)
+    // renders the same as the resting state instead of sticking.
+    header.leadingStyles = fui::plainStyles(fui::Paint::solid(fui::Color::Black));
     HeaderBackTapTarget::set(frameRect.x + 4, metrics.topPadding + 4 + header.actionOffsetY, header.leadingSize,
                              header.leadingSize);
   }

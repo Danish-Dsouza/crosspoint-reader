@@ -212,7 +212,9 @@ void OpdsBookBrowserActivity::buildPaginationBar(UiScreen& screen) {
 
 void OpdsBookBrowserActivity::buildBrowsingScreen(UiScreen& screen) {
   // Reserve the pagination band before the list claims the remaining height.
-  if (hasPagination()) buildPaginationBar(screen);
+  if (!pageNextHref.empty() || !pagePrevHref.empty() || !pageFirstHref.empty() || !pageLastHref.empty()) {
+    buildPaginationBar(screen);
+  }
 
   if (entries.empty()) {
     screen.centeredText(tr(STR_NO_ENTRIES), screen.theme().bodyText);
@@ -271,6 +273,7 @@ void OpdsBookBrowserActivity::drawFooter() {
 }
 
 void OpdsBookBrowserActivity::startBrowse() {
+  releaseEntries();  // harmless when already empty
   nav.reset();
   beginLoading();
   fetchFeed(currentPath);
@@ -419,7 +422,6 @@ void OpdsBookBrowserActivity::navigateToEntry(const OpdsEntry& entry) {
   const std::string feedUrl = UrlUtils::buildUrl(server.url, currentPath);
   currentPath = UrlUtils::buildUrl(feedUrl, entry.href);
 
-  releaseEntries();
   startBrowse();
 }
 
@@ -434,14 +436,12 @@ void OpdsBookBrowserActivity::navigateBack() {
     setSearchQuery(searchQueryHistory.back());
     searchQueryHistory.pop_back();
   }
-  releaseEntries();
   startBrowse();
 }
 
 void OpdsBookBrowserActivity::onBackButton() {
   if (state == State::DETAIL) {
     // Entries were released for heap; rebuild the catalog we came from.
-    releaseEntries();
     startBrowse();
     return;
   }
@@ -804,7 +804,5 @@ void OpdsBookBrowserActivity::performSearch(const std::string& query) {
   setSearchQuery(query);
   currentPath = url;
 
-  nav.reset();
-  releaseEntries();
-  fetchFeed(url);
+  startBrowse();
 }
