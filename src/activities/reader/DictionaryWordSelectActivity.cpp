@@ -12,8 +12,8 @@
 
 #include "CrossPointSettings.h"
 #include "DictionaryDefinitionActivity.h"
-#include "clippings/SelectionGeometry.h"
 #include "HapticFeedback.h"
+#include "clippings/SelectionGeometry.h"
 #include "components/UITheme.h"
 #include "util/WordSelectionInput.h"
 
