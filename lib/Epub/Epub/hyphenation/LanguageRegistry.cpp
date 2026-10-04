@@ -10,10 +10,6 @@
 #include "generated/hyph-fr.trie.h"
 #include "generated/hyph-it.trie.h"
 #include "generated/hyph-pt.trie.h"
-#ifdef HYPHENATION_BENCH_EMBEDDED
-#include "generated/hyph-de.trie.h"
-#include "generated/hyph-hu.trie.h"
-#endif
 
 namespace {
 
@@ -22,10 +18,6 @@ LanguageHyphenator frenchHyphenator(fr_patterns, isLatinLetter, toLowerLatin);
 LanguageHyphenator finnishHyphenator(fi_patterns, isLatinLetter, toLowerLatin);
 LanguageHyphenator italianHyphenator(it_patterns, isLatinLetter, toLowerLatin);
 LanguageHyphenator portugueseHyphenator(pt_patterns, isLatinLetter, toLowerLatin);
-#ifdef HYPHENATION_BENCH_EMBEDDED
-LanguageHyphenator benchmarkGerman(de_patterns, isLatinLetter, toLowerLatin);
-LanguageHyphenator benchmarkHungarian(hu_patterns, isLatinLetter, toLowerLatin);
-#endif
 
 using EntryArray = std::array<LanguageEntry, 28>;
 const EntryArray& entries() {
@@ -42,13 +34,8 @@ const EntryArray& entries() {
       {"finnish", "fi", &finnishHyphenator, 2, 2, isLatinLetter, toLowerLatin},
       {"french", "fr", &frenchHyphenator, 2, 2, isLatinLetter, toLowerLatin},
       {"galician", "gl", nullptr, 2, 2, isLatinLetter, toLowerLatin},
-#ifdef HYPHENATION_BENCH_EMBEDDED
-      {"german", "de", &benchmarkGerman, 2, 2, isLatinLetter, toLowerLatin},
-      {"hungarian", "hu", &benchmarkHungarian, 2, 2, isLatinLetter, toLowerLatin},
-#else
       {"german", "de", nullptr, 2, 2, isLatinLetter, toLowerLatin},
       {"hungarian", "hu", nullptr, 2, 2, isLatinLetter, toLowerLatin},
-#endif
       {"icelandic", "is", nullptr, 2, 2, isLatinLetter, toLowerLatin},
       {"italian", "it", &italianHyphenator, 2, 2, isLatinLetter, toLowerLatin},
       {"kurmanji", "ku", nullptr, 2, 2, isLatinLetter, toLowerLatin},

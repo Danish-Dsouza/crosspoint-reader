@@ -10,7 +10,9 @@
 #include <WiFi.h>
 #include <esp_rom_crc.h>
 
+#include <cstddef>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include "HyphenationPackStore.h"
@@ -26,6 +28,45 @@ constexpr char MANIFEST_URL[] =
     "https://github.com/crosspoint-reader/crosspoint-assets/releases/latest/download/hyphenation.json";
 constexpr char MANIFEST_TMP[] = "/.crosspoint/hyphenation_manifest.tmp";
 constexpr char PACK_TMP[] = "/.crosspoint/hyphenation_pack.tmp";
+constexpr size_t MAX_MANIFEST_SIZE = 32 * 1024;
+constexpr size_t MAX_JSON_MEMORY = 24 * 1024;
+
+// ArduinoJson owns these blocks; account for them before allowing DOM growth.
+class ManifestAllocator final : public ArduinoJson::Allocator {
+  struct alignas(std::max_align_t) Block {
+    size_t size;
+  };
+  size_t used_ = 0;
+
+ public:
+  void* allocate(size_t size) override {
+    if (size > MAX_JSON_MEMORY - used_ || sizeof(Block) > MAX_JSON_MEMORY - used_ - size) return nullptr;
+    auto* block = static_cast<Block*>(std::malloc(sizeof(Block) + size));
+    if (!block) return nullptr;
+    block->size = sizeof(Block) + size;
+    used_ += block->size;
+    return block + 1;
+  }
+
+  void deallocate(void* ptr) override {
+    if (!ptr) return;
+    auto* block = static_cast<Block*>(ptr) - 1;
+    used_ -= block->size;
+    std::free(block);
+  }
+
+  void* reallocate(void* ptr, size_t size) override {
+    if (!ptr) return allocate(size);
+    const size_t oldSize = (static_cast<Block*>(ptr) - 1)->size - sizeof(Block);
+    if (size <= oldSize) return ptr;
+    // Both blocks count against the budget while a growing string is copied.
+    void* next = allocate(size);
+    if (!next) return nullptr;
+    std::memcpy(next, ptr, oldSize);
+    deallocate(ptr);
+    return next;
+  }
+};
 
 bool isPackFilename(const char* name) {
   return std::strlen(name) == 14 && std::strncmp(name, "hyph-", 5) == 0 && name[5] >= 'a' && name[5] <= 'z' &&
@@ -96,6 +137,7 @@ void HyphenationManagerActivity::onEnter() {
     finish();
     return;
   }
+  if (auto* cache = renderer.getFontCacheManager()) cache->releaseSdFontCaches();
   WiFi.mode(WIFI_STA);
   wifiStarted_ = true;
   auto wifi = makeUniqueNoThrow<WifiSelectionActivity>(renderer, mappedInput);
@@ -141,42 +183,68 @@ bool HyphenationManagerActivity::loadManifest() {
     Storage.remove(MANIFEST_TMP);
     return false;
   }
-  JsonDocument document;
-  DeserializationError error = deserializeJson(document, file);
+  if (file.size() > MAX_MANIFEST_SIZE) {
+    LOG_ERR("HYPH", "Language list exceeds %zu bytes", MAX_MANIFEST_SIZE);
+    file.close();
+    Storage.remove(MANIFEST_TMP);
+    return false;
+  }
+  ManifestAllocator allocator;
+  JsonDocument document(&allocator);
+  JsonDocument filter(&allocator);
+  filter["version"] = true;
+  filter["baseUrl"] = true;
+  for (const char* key : {"code", "name", "file", "size", "crc32", "payloadCrc32"}) filter["packs"][0][key] = true;
+  if (filter.overflowed()) {
+    LOG_ERR("HYPH", "OOM: language list filter");
+    file.close();
+    Storage.remove(MANIFEST_TMP);
+    return false;
+  }
+  DeserializationError error = deserializeJson(document, file, DeserializationOption::Filter(filter));
   file.close();
   Storage.remove(MANIFEST_TMP);
-  if (error || (document["version"] | 0) != 1) return false;
+  if (error) {
+    LOG_ERR("HYPH", "Language list parse error: %s", error.c_str());
+    return false;
+  }
+  if ((document["version"] | 0) != 1) return false;
   JsonArray entries = document["packs"].as<JsonArray>();
-  if (entries.size() != MAX_PACKS) return false;
+  if (entries.isNull() || entries.size() == 0) return false;
   const char* base = document["baseUrl"] | "";
   if (std::strncmp(base, "https://", 8) != 0 || std::strlen(base) > 180) return false;
   baseUrl_ = base;
   if (baseUrl_.back() != '/') return false;
 
   size_t count = 0;
-  for (JsonObject item : entries) {
-    const char* code = item["code"] | "";
-    const char* name = item["name"] | "";
-    const char* filename = item["file"] | "";
-    char expected[16];
-    if (std::strlen(code) != 2 || code[0] < 'a' || code[0] > 'z' || code[1] < 'a' || code[1] > 'z') return false;
-    std::snprintf(expected, sizeof(expected), "hyph-%s.cphyph", code);
-    if (std::strcmp(filename, expected) != 0 || !name[0] || std::strlen(name) >= sizeof(Pack::name) ||
-        !item["size"].is<uint32_t>() || !item["crc32"].is<uint32_t>() || !item["payloadCrc32"].is<uint32_t>()) {
-      return false;
+  // Supported languages get capacity first; retain other rows as disabled when they fit.
+  for (const bool supported : {true, false}) {
+    for (JsonObject item : entries) {
+      const char* code = item["code"] | "";
+      const LanguageEntry* language = findLanguageEntry(code);
+      if ((language != nullptr) != supported || count == MAX_PACKS) continue;
+      const char* name = item["name"] | "";
+      const char* filename = item["file"] | "";
+      char expected[16];
+      if (std::strlen(code) != 2 || code[0] < 'a' || code[0] > 'z' || code[1] < 'a' || code[1] > 'z') return false;
+      std::snprintf(expected, sizeof(expected), "hyph-%s.cphyph", code);
+      if (std::strcmp(filename, expected) != 0 || !name[0] || std::strlen(name) >= sizeof(Pack::name) ||
+          !item["size"].is<uint32_t>() || !item["crc32"].is<uint32_t>() || !item["payloadCrc32"].is<uint32_t>()) {
+        return false;
+      }
+      for (size_t j = 0; j < count; ++j) {
+        if (std::strcmp(packs_[j].code, code) == 0) return false;
+      }
+      Pack& pack = packs_[count++];
+      std::snprintf(pack.code, sizeof(pack.code), "%s", code);
+      std::snprintf(pack.name, sizeof(pack.name), "%s", name);
+      pack.size = item["size"].as<uint32_t>();
+      pack.fileCrc = item["crc32"].as<uint32_t>();
+      pack.payloadCrc = item["payloadCrc32"].as<uint32_t>();
+      pack.supported = language != nullptr;
+      pack.builtIn = language && language->hyphenator;
     }
-    for (size_t j = 0; j < count; ++j) {
-      if (std::strcmp(packs_[j].code, code) == 0) return false;
-    }
-    Pack& pack = packs_[count++];
-    std::snprintf(pack.code, sizeof(pack.code), "%s", code);
-    std::snprintf(pack.name, sizeof(pack.name), "%s", name);
-    pack.size = item["size"].as<uint32_t>();
-    pack.fileCrc = item["crc32"].as<uint32_t>();
-    pack.payloadCrc = item["payloadCrc32"].as<uint32_t>();
-    const LanguageEntry* language = findLanguageEntry(code);
-    pack.supported = language != nullptr;
-    pack.builtIn = language && language->hyphenator;
+    if (supported && count == 0) return false;
   }
   packCount_ = count;
   return true;
