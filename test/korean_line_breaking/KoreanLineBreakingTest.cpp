@@ -101,7 +101,7 @@ TEST(ClippingAnchors, SourceCoverageSurvivesWrappingAndHyphenation) {
     for (const bool hyphenation : {false, true}) {
       BlockStyle style;
       style.textIndentDefined = true;
-      ParsedText text(false, hyphenation, false, style);
+      ParsedText text(hyphenation, false, style, 0);
       text.addWord("가나", EpdFontFamily::REGULAR, false, false, 100);
       text.addWord("다라마바사아", EpdFontFamily::REGULAR, false, false, 103);
       text.addWord("자", EpdFontFamily::REGULAR, false, false, 110);
