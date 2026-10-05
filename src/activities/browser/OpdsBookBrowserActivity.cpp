@@ -22,6 +22,7 @@
 
 #include "BookKey.h"
 #include "CrossPointSettings.h"
+#include "LcpPassphraseStore.h"
 #include "MappedInputManager.h"
 #include "OpdsTokenStore.h"
 #include "activities/util/KeyboardEntryActivity.h"
@@ -635,6 +636,61 @@ void OpdsBookBrowserActivity::downloadLcpBook(const OpdsEntry& book) {
   pendingLcpLicense = std::move(license);
   pendingLcpLicenseText = std::move(licenseText);
   pendingLcpPath = filename;
+  startLcpUnlock();
+}
+
+// One /unlock round trip with an already-derived user-key hash. Terminal
+// failures (unsupported profile, network, key store) call fail() themselves.
+OpdsBookBrowserActivity::LcpUnlock OpdsBookBrowserActivity::requestLcpUnlock(const std::string& userKeyHex) {
+  std::string request;
+  request.reserve(pendingLcpLicenseText.size() + 96);
+  request += "{\"user_key\":\"";
+  request += userKeyHex;
+  request += "\",\"license\":";
+  request += pendingLcpLicenseText;  // verbatim: it parsed as JSON at download time
+  request += '}';
+
+  std::string response;
+  int status = 0;
+  statusMessage = tr(STR_LOADING);
+  requestUpdate(true);
+  const bool ok = HttpDownloader::postForm(freeink::content::LCP_UNLOCK_URL, request, response, &status);
+  if (status == 403) return LcpUnlock::WrongPassphrase;
+  if (status == 422) {
+    fail(StrId::STR_LCP_UNSUPPORTED);
+    return LcpUnlock::Failed;
+  }
+  int64_t expiresAt = 0;
+  uint8_t contentKey[32];
+  if (!ok || !parseUnlockResponse(response, contentKey, &expiresAt)) {
+    LOG_ERR("OPDS", "LCP unlock failed (status %d)", status);
+    fail(StrId::STR_DOWNLOAD_FAILED);
+    return LcpUnlock::Failed;
+  }
+  if (!bookkey::write(pendingLcpPath, contentKey, sizeof(contentKey), expiresAt)) {
+    fail(StrId::STR_DOWNLOAD_FAILED);
+    return LcpUnlock::Failed;
+  }
+  return LcpUnlock::Ok;
+}
+
+// Entry point after fulfillment: a hash saved for this provider skips the
+// prompt entirely; only a stale one (403) falls through to the keyboard.
+void OpdsBookBrowserActivity::startLcpUnlock() {
+  if (!pendingLcpLicense.provider.empty()) {
+    const std::string saved = LCP_PASSPHRASES.get(pendingLcpLicense.provider);
+    if (!saved.empty()) {
+      switch (requestLcpUnlock(saved)) {
+        case LcpUnlock::Ok:
+          downloadFinished(false);
+          return;
+        case LcpUnlock::Failed:
+          return;
+        case LcpUnlock::WrongPassphrase:
+          break;  // the library changed the passphrase: ask the reader
+      }
+    }
+  }
   promptLcpPassphrase(/*retry=*/false);
 }
 
@@ -669,39 +725,20 @@ void OpdsBookBrowserActivity::promptLcpPassphrase(const bool retry) {
     char userKeyHex[65];
     for (int i = 0; i < 32; i++) snprintf(userKeyHex + i * 2, 3, "%02x", userKey[i]);
 
-    std::string request;
-    request.reserve(pendingLcpLicenseText.size() + 96);
-    request += "{\"user_key\":\"";
-    request += userKeyHex;
-    request += "\",\"license\":";
-    request += pendingLcpLicenseText;  // verbatim: it parsed as JSON above
-    request += '}';
-
-    std::string response;
-    int status = 0;
-    statusMessage = tr(STR_LOADING);
-    requestUpdate(true);
-    const bool ok = HttpDownloader::postForm(freeink::content::LCP_UNLOCK_URL, request, response, &status);
-    if (status == 403) {
-      promptLcpPassphrase(/*retry=*/true);
-      return;
+    switch (requestLcpUnlock(userKeyHex)) {
+      case LcpUnlock::Ok:
+        // Remember the working hash per provider so the next borrow from
+        // this library skips the prompt. Best-effort: on failure the reader
+        // just types it again next time.
+        if (!pendingLcpLicense.provider.empty()) LCP_PASSPHRASES.put(pendingLcpLicense.provider, userKeyHex);
+        downloadFinished(false);
+        return;
+      case LcpUnlock::WrongPassphrase:
+        promptLcpPassphrase(/*retry=*/true);
+        return;
+      case LcpUnlock::Failed:
+        return;
     }
-    if (status == 422) {
-      fail(StrId::STR_LCP_UNSUPPORTED);
-      return;
-    }
-    int64_t expiresAt = 0;
-    uint8_t contentKey[32];
-    if (!ok || !parseUnlockResponse(response, contentKey, &expiresAt)) {
-      LOG_ERR("OPDS", "LCP unlock failed (status %d)", status);
-      fail(StrId::STR_DOWNLOAD_FAILED);
-      return;
-    }
-    if (!bookkey::write(pendingLcpPath, contentKey, sizeof(contentKey), expiresAt)) {
-      fail(StrId::STR_DOWNLOAD_FAILED);
-      return;
-    }
-    downloadFinished(false);
   });
 }
 
