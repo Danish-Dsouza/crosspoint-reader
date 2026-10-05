@@ -176,8 +176,18 @@ void DictionaryWordSelectActivity::performLookup() {
   std::vector<Dictionary::Entry> entries;
   std::string definition;
   Dictionary::LookupResult result = Dictionary::LookupResult::NotFound;
-  const bool found =
-      ok && dict.lookup(words[selected].text, entries, &result) && dict.readEntry(entries[0], definition, &result);
+  bool found = false;
+  if (ok && dict.lookup(words[selected].text, entries, &result)) {
+    // Open on the first entry that reads, so one damaged entry doesn't hide the
+    // rest. A low-memory failure would fail again for every entry, so stop there.
+    auto readable = entries.begin();
+    while (readable != entries.end() && !dict.readEntry(*readable, definition, &result) &&
+           result != Dictionary::LookupResult::LowMemory) {
+      ++readable;
+    }
+    found = readable != entries.end() && result == Dictionary::LookupResult::Found;
+    if (found) entries.erase(entries.begin(), readable);
+  }
 
   if (found) {
     popup = Popup::None;

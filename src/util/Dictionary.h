@@ -122,6 +122,9 @@ class Dictionary {
   // handles are opened lazily by locateSynonym() — only an exact miss consults
   // them, so a hit never pays for two extra SD opens.
   struct LookupSession {
+    // The looked-up word as it appears in the text (edges trimmed, case kept),
+    // for ranking matches once more than MAX_ENTRIES are found.
+    const char* textWord = "";
     HalFile idx;
     HalFile qidx;
     HalFile syn;
@@ -157,10 +160,10 @@ class Dictionary {
   // unreadable. Clobbers wordBuf.
   uint32_t bisectSamples(HalFile& sidecar, HalFile& source, uint32_t sampleCount, const char* target);
 
-  // The locate functions append matches to out (deduplicated, capped at
-  // MAX_ENTRIES) and return false when the search was cut short by an open or
-  // seek failure rather than reaching a verdict, so a failed search isn't
-  // reported as a genuine miss.
+  // The locate functions append matches to out (deduplicated, keeping the
+  // MAX_ENTRIES best-ranked for session.textWord) and return false when the
+  // search was cut short by an open or seek failure rather than reaching a
+  // verdict, so a failed search isn't reported as a genuine miss.
 
   // Every .idx entry whose headword case-insensitively equals target. StarDict
   // sorts case-insensitively, so they are adjacent.

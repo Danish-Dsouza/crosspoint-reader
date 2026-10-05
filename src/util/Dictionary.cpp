@@ -8,6 +8,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstring>
+#include <iterator>
 
 #include "DictWordUtils.h"
 #include "DictZip.h"
@@ -61,12 +62,25 @@ uint32_t readBe32(const uint8_t* p) {
          (static_cast<uint32_t>(p[2]) << 8) | static_cast<uint32_t>(p[3]);
 }
 
-// Append an entry unless it is already present (a .syn can list the same
-// synonym→headword pair twice) or the list is full.
-void appendEntry(std::vector<Dictionary::Entry>& out, const char* headword, uint32_t offset, uint32_t size) {
-  if (out.size() >= Dictionary::MAX_ENTRIES) return;
-  for (const auto& e : out) {
-    if (e.offset == offset && e.size == size) return;
+// Add an entry unless it is already present (a .syn can list the same
+// synonym→headword pair twice). Once the list is full, a better-ranked entry
+// for textWord replaces the latest worst-ranked one, so the closest matches
+// survive however many equivalent headwords the index holds. Entries stay in
+// index order.
+void appendEntry(std::vector<Dictionary::Entry>& out, const char* textWord, const char* headword, uint32_t offset,
+                 uint32_t size) {
+  if (std::any_of(out.begin(), out.end(),
+                  [offset, size](const Dictionary::Entry& e) { return e.offset == offset && e.size == size; })) {
+    return;
+  }
+  if (out.size() >= Dictionary::MAX_ENTRIES) {
+    const auto rankOf = [textWord](const Dictionary::Entry& e) {
+      return DictWordUtils::headwordRank(e.headword.c_str(), textWord);
+    };
+    const auto worst = std::max_element(out.rbegin(), out.rend(),
+                                        [&rankOf](const auto& a, const auto& b) { return rankOf(a) < rankOf(b); });
+    if (DictWordUtils::headwordRank(headword, textWord) >= rankOf(*worst)) return;
+    out.erase(std::next(worst).base());
   }
   out.push_back({headword, offset, size});
 }
@@ -401,7 +415,7 @@ bool Dictionary::locate(LookupSession& session, const char* target, std::vector<
     LOG_ERR("DICT", "Index seek to %lu failed", static_cast<unsigned long>(startByte));
     return false;
   }
-  while (static_cast<uint32_t>(session.idx.position()) < session.idxSize && out.size() < MAX_ENTRIES) {
+  while (static_cast<uint32_t>(session.idx.position()) < session.idxSize) {
     // Not flagged as a read error: readWordInto returns -1 for EOF and IO error
     // alike, so a short tail can't be told from a truncated .idx. Treat it as
     // the end of the index rather than risk reporting a read failure for what
@@ -411,7 +425,7 @@ bool Dictionary::locate(LookupSession& session, const char* target, std::vector<
     if (session.idx.read(suffix, 8) != 8) break;
 
     const int cmp = StringUtils::asciiCaseCmp(wordBuf, target);
-    if (cmp == 0) appendEntry(out, wordBuf, readBe32(suffix), readBe32(suffix + 4));
+    if (cmp == 0) appendEntry(out, session.textWord, wordBuf, readBe32(suffix), readBe32(suffix + 4));
     if (cmp > 0) break;
   }
   return true;
@@ -448,7 +462,7 @@ bool Dictionary::locateByOrdinal(LookupSession& session, uint32_t ordinal, std::
   }
   if (static_cast<uint32_t>(session.idx.position()) >= session.idxSize) return true;
   if (readWordInto(session.idx, wordBuf, sizeof(wordBuf)) < 0 || session.idx.read(suffix, 8) != 8) return true;
-  appendEntry(out, wordBuf, readBe32(suffix), readBe32(suffix + 4));
+  appendEntry(out, session.textWord, wordBuf, readBe32(suffix), readBe32(suffix + 4));
   return true;
 }
 
@@ -467,7 +481,7 @@ bool Dictionary::locateSynonym(LookupSession& session, const char* target, std::
     LOG_ERR("DICT", "Synonym seek to %lu failed", static_cast<unsigned long>(startByte));
     return false;
   }
-  while (static_cast<uint32_t>(session.syn.position()) < session.synSize && out.size() < MAX_ENTRIES) {
+  while (static_cast<uint32_t>(session.syn.position()) < session.synSize) {
     if (readWordInto(session.syn, wordBuf, sizeof(wordBuf)) < 0) break;
     uint8_t ordBytes[4];
     if (session.syn.read(ordBytes, 4) != 4) break;
@@ -599,6 +613,7 @@ bool Dictionary::lookup(const char* word, std::vector<Entry>& entriesOut, Lookup
   setResult(LookupResult::NotFound);
   entriesOut.clear();
   const std::string cleaned = cleanWord(word);
+  const std::string textWord = DictWordUtils::trimWordEdges(word);
   if (cleaned.empty() || !isOpen()) return false;
   entriesOut.reserve(MAX_ENTRIES);
 
@@ -607,6 +622,7 @@ bool Dictionary::lookup(const char* word, std::vector<Entry>& entriesOut, Lookup
   bool searchFailed = false;
   {
     LookupSession session;
+    session.textWord = textWord.c_str();
     // Couldn't open .idx: the search never reached a verdict, so this is a read
     // failure, not a miss.
     if (!openSession(session)) {
@@ -638,7 +654,6 @@ bool Dictionary::lookup(const char* word, std::vector<Entry>& entriesOut, Lookup
     return false;
   }
 
-  const std::string textWord = DictWordUtils::trimWordEdges(word);
   std::stable_sort(entriesOut.begin(), entriesOut.end(), [&textWord](const Entry& a, const Entry& b) {
     return DictWordUtils::headwordRank(a.headword.c_str(), textWord.c_str()) <
            DictWordUtils::headwordRank(b.headword.c_str(), textWord.c_str());
