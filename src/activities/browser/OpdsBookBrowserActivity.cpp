@@ -14,6 +14,8 @@
 #include <OpdsFeedParser.h>
 #include <OpdsPublicationDoc.h>
 #include <OpdsSearchTemplate.h>
+#include <StreamingJsonParser.h>
+#include <Util.h>
 #include <WolfsslCrypto.h>
 
 #include <iterator>
@@ -38,10 +40,6 @@ constexpr int16_t PAGE_FIRST = 0;
 constexpr int16_t PAGE_PREV = 1;
 constexpr int16_t PAGE_NEXT = 2;
 constexpr int16_t PAGE_LAST = 3;
-
-// Readium LCP fulfillment service (see the crosspoint-lcp repo): embeds a
-// POSTed license into its encrypted publication and returns the EPUB.
-constexpr const char* LCP_FULFILL_URL = "https://lcp.freeink.org/fulfill";
 
 // Accept-Language from the reader's UI language, so servers that localize the
 // catalog (e.g. Lirtuel) return it translated. Primary subtag plus an English
@@ -616,12 +614,9 @@ void OpdsBookBrowserActivity::downloadLcpBook(const OpdsEntry& book) {
     fail(StrId::STR_OPDS_NOT_A_BOOK);
     return;
   }
-  if (!license.isBasicProfile()) {
-    // The 1.0 production profile needs the certified user-key transform;
-    // only the open basic profile is supported so far.
-    fail(StrId::STR_LCP_UNSUPPORTED);
-    return;
-  }
+  // No profile gate here: key derivation is entirely server-side (the
+  // /unlock endpoint answers 422 for profiles it cannot serve), so this
+  // firmware works unchanged when the service gains the production profile.
 
   const std::string filename = downloadDestination(book);
   LOG_DBG("OPDS", "LCP fulfill: %s -> %s", licenseUrl.c_str(), filename.c_str());
@@ -629,7 +624,7 @@ void OpdsBookBrowserActivity::downloadLcpBook(const OpdsEntry& book) {
   // Reclaim the catalog while TLS owns its record buffers, as for a plain
   // download; downloadFile() gates the heap and pumps cancel input.
   releaseEntries();
-  const auto result = downloadFile(LCP_FULFILL_URL, filename, "", "", {}, &licenseText,
+  const auto result = downloadFile(freeink::content::LCP_FULFILL_URL, filename, "", "", {}, &licenseText,
                                    "application/vnd.readium.lcp.license.v1.0+json");
   if (result != HttpDownloader::OK) {
     finishDownload(result);
@@ -638,6 +633,7 @@ void OpdsBookBrowserActivity::downloadLcpBook(const OpdsEntry& book) {
   if (!verifyAndRegisterEpub(filename)) return;
 
   pendingLcpLicense = std::move(license);
+  pendingLcpLicenseText = std::move(licenseText);
   pendingLcpPath = filename;
   promptLcpPassphrase(/*retry=*/false);
 }
@@ -663,27 +659,88 @@ void OpdsBookBrowserActivity::promptLcpPassphrase(const bool retry) {
       return;
     }
     const std::string pass = std::get<KeyboardResult>(result.data).text;
+    // The device only hashes the passphrase; profile key derivation (and the
+    // production profile's confidential transform, once certified) lives in
+    // the LCP service. The hash travels over TLS to our own endpoint — the
+    // same material LCP license servers receive at provisioning time.
     freeink::content::WolfsslCrypto crypto;
     uint8_t userKey[32];
     freeink::content::lcpUserKey(crypto, pass.data(), pass.size(), userKey);
-    if (!freeink::content::lcpCheckUserKey(crypto, pendingLcpLicense, userKey)) {
+    char userKeyHex[65];
+    for (int i = 0; i < 32; i++) snprintf(userKeyHex + i * 2, 3, "%02x", userKey[i]);
+
+    std::string request;
+    request.reserve(pendingLcpLicenseText.size() + 96);
+    request += "{\"user_key\":\"";
+    request += userKeyHex;
+    request += "\",\"license\":";
+    request += pendingLcpLicenseText;  // verbatim: it parsed as JSON above
+    request += '}';
+
+    std::string response;
+    int status = 0;
+    statusMessage = tr(STR_LOADING);
+    requestUpdate(true);
+    const bool ok = HttpDownloader::postForm(freeink::content::LCP_UNLOCK_URL, request, response, &status);
+    if (status == 403) {
       promptLcpPassphrase(/*retry=*/true);
       return;
     }
-    uint8_t contentKey[32];
-    if (!freeink::content::lcpContentKey(crypto, pendingLcpLicense, userKey, contentKey)) {
+    if (status == 422) {
       fail(StrId::STR_LCP_UNSUPPORTED);
       return;
     }
-    const int64_t expiresAt = pendingLcpLicense.rightsEnd.empty()
-                                  ? 0
-                                  : freeink::content::lcpParseIso8601(pendingLcpLicense.rightsEnd.c_str());
+    int64_t expiresAt = 0;
+    uint8_t contentKey[32];
+    if (!ok || !parseUnlockResponse(response, contentKey, &expiresAt)) {
+      LOG_ERR("OPDS", "LCP unlock failed (status %d)", status);
+      fail(StrId::STR_DOWNLOAD_FAILED);
+      return;
+    }
     if (!bookkey::write(pendingLcpPath, contentKey, sizeof(contentKey), expiresAt)) {
       fail(StrId::STR_DOWNLOAD_FAILED);
       return;
     }
     downloadFinished(false);
   });
+}
+
+// {content_key: <base64 32 bytes>, expires: <epoch seconds>} from /unlock.
+bool OpdsBookBrowserActivity::parseUnlockResponse(const std::string& response, uint8_t contentKey[32],
+                                                  int64_t* expiresAt) {
+  struct Ctx {
+    char pending[16] = {0};
+    std::string keyB64;
+    int64_t expires = 0;
+  } ctx;
+  JsonCallbacks callbacks = {};
+  callbacks.ctx = &ctx;
+  callbacks.onKey = [](void* ud, const char* key, size_t len) {
+    auto& c = *static_cast<Ctx*>(ud);
+    const size_t n = len < sizeof(c.pending) - 1 ? len : sizeof(c.pending) - 1;
+    memcpy(c.pending, key, n);
+    c.pending[n] = '\0';
+  };
+  callbacks.onString = [](void* ud, const char* value, size_t len) {
+    auto& c = *static_cast<Ctx*>(ud);
+    if (strcmp(c.pending, "content_key") == 0) c.keyB64.assign(value, len < 128 ? len : 128);
+  };
+  callbacks.onNumber = [](void* ud, const char* value, size_t) {
+    auto& c = *static_cast<Ctx*>(ud);
+    if (strcmp(c.pending, "expires") == 0) c.expires = strtoll(value, nullptr, 10);
+  };
+  callbacks.onBool = [](void*, bool) {};
+  callbacks.onNull = [](void*) {};
+  callbacks.onObjectStart = [](void*) {};
+  callbacks.onObjectEnd = [](void*) {};
+  callbacks.onArrayStart = [](void*) {};
+  callbacks.onArrayEnd = [](void*) {};
+  StreamingJsonParser parser(callbacks);
+  parser.feed(response.data(), response.size());
+  if (parser.hasError() || ctx.keyB64.empty()) return false;
+  if (freeink::content::base64Decode(ctx.keyB64.data(), ctx.keyB64.size(), contentKey, 32) != 32) return false;
+  *expiresAt = ctx.expires > 0 ? ctx.expires : 0;
+  return true;
 }
 
 void OpdsBookBrowserActivity::onDetailEvent(const fui::ActionEvent&, void* user) {

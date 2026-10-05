@@ -123,10 +123,14 @@ class OpdsBookBrowserActivity final : public CatalogActivity {
   // then prompt for the passphrase and store the device-wrapped book key.
   void downloadLcpBook(const OpdsEntry& book);
   void promptLcpPassphrase(bool retry);
+  // Decodes the /unlock response ({content_key: b64, expires: epoch}).
+  static bool parseUnlockResponse(const std::string& response, uint8_t contentKey[32], int64_t* expiresAt);
   std::string downloadDestination(const OpdsEntry& book) const;
   bool verifyAndRegisterEpub(const std::string& filename);
   // Fulfilled LCP book awaiting its passphrase (path + parsed license).
   freeink::content::LcpLicense pendingLcpLicense;
+  // Raw license JSON, kept verbatim for the /unlock request body.
+  std::string pendingLcpLicenseText;
   std::string pendingLcpPath;
 
   void fetchFeed(const std::string& path);
