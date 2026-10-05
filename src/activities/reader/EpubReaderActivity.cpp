@@ -49,6 +49,7 @@
 #include "SilentRestart.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "activities/settings/TextSettingsActivity.h"
+#include "clippings/ClippingText.h"
 #include "clippings/ClippingsManager.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -68,25 +69,12 @@ constexpr size_t initialBookmarkCacheCapacity = 16;
 constexpr float bookmarkProgressEpsilon = 0.0001f;
 constexpr int CLIP_SELECTION_PAGE_WINDOW = 3;
 
-bool hasVisibleWordText(const char* text) {
-  if (!text) return false;
-  for (const auto* p = reinterpret_cast<const uint8_t*>(text); *p != 0; ++p) {
-    if (*p > ' ') return true;
-  }
-  return false;
-}
-
-bool hasEmSpacePrefix(const char* text) {
-  return text && static_cast<uint8_t>(text[0]) == 0xE2 && static_cast<uint8_t>(text[1]) == 0x80 &&
-         static_cast<uint8_t>(text[2]) == 0x83;
-}
-
 Rect clippingWordRect(const GfxRenderer& renderer, const int fontId, const PageLine& line, const uint16_t i,
                       const int top, const int left, const int wordWidth) {
   const auto& block = line.getBlock();
   const char* text = block->wordText(i);
   const auto style = static_cast<EpdFontFamily::Style>(block->wordStyle(i) & ~EpdFontFamily::UNDERLINE);
-  const int skipX = hasEmSpacePrefix(text) ? renderer.getTextAdvanceX(fontId, "\xe2\x80\x83", style) : 0;
+  const int skipX = clippingText::hasEmSpacePrefix(text) ? renderer.getTextAdvanceX(fontId, "\xe2\x80\x83", style) : 0;
   int width = wordWidth - skipX;
   if (i + 1 < block->wordCount() && block->wordXpos(i + 1) > block->wordXpos(i)) {
     width = std::min(width, static_cast<int>(block->wordXpos(i + 1) - block->wordXpos(i) - skipX));
@@ -2152,7 +2140,7 @@ int EpubReaderActivity::clippingAtPoint(const Page& page, const int x, const int
     if (!block || !block->valid()) continue;
     for (uint16_t i = 0; i < block->wordCount(); ++i) {
       const char* text = block->wordText(i);
-      if (!hasVisibleWordText(text)) continue;
+      if (!clippingText::hasVisibleText(text)) continue;
       const auto style = static_cast<EpdFontFamily::Style>(block->wordStyle(i) & ~EpdFontFamily::UNDERLINE);
       const int width = renderer.getTextAdvanceX(fontId, text, style);
       if (width <= 0) continue;
@@ -2210,7 +2198,7 @@ void EpubReaderActivity::drawClippingHighlights(const Page& page, const int font
     int previousHighlightWidth = 0;
     for (uint16_t i = 0; i < block->wordCount(); ++i) {
       const char* text = block->wordText(i);
-      if (!hasVisibleWordText(text)) continue;
+      if (!clippingText::hasVisibleText(text)) continue;
       const auto style = static_cast<EpdFontFamily::Style>(block->wordStyle(i) & ~EpdFontFamily::UNDERLINE);
       int width = renderer.getTextAdvanceX(fontId, text, style);
       if (width <= 0) continue;

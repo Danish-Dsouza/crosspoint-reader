@@ -32,22 +32,9 @@ constexpr int TOUCH_PAGE_END_DWELL_SLOP_PX = 8;
 constexpr ClippingResult::Action SELECTION_ACTIONS[] = {ClippingResult::Action::Lookup, ClippingResult::Action::Clip,
                                                         ClippingResult::Action::Bookmark};
 
-bool hasVisibleText(const char* text) {
-  if (!text) return false;
-  for (const auto* p = reinterpret_cast<const uint8_t*>(text); *p != 0; ++p) {
-    if (*p > ' ') return true;
-  }
-  return false;
-}
-
-bool hasEmSpacePrefix(const char* text) {
-  return text && static_cast<uint8_t>(text[0]) == 0xE2 && static_cast<uint8_t>(text[1]) == 0x80 &&
-         static_cast<uint8_t>(text[2]) == 0x83;
-}
-
 const char* cleanWordStart(const char* text) {
   if (!text) return "";
-  if (hasEmSpacePrefix(text)) text += 3;
+  if (clippingText::hasEmSpacePrefix(text)) text += 3;
   while (*text != '\0' && (*text == ' ' || *text == '\r' || *text == '\n' || *text == '\t' ||
                            (static_cast<uint8_t>(text[0]) == 0xC2 && static_cast<uint8_t>(text[1]) == 0xA0))) {
     text += static_cast<uint8_t>(text[0]) == 0xC2 ? 2 : 1;
@@ -125,7 +112,7 @@ bool ClipSelectionActivity::extractWords() {
       const int rubyShift = block->getRubyShift(renderer.getFontAscenderSize(fontId));
       for (uint16_t i = 0; i < block->wordCount(); ++i) {
         const char* text = block->wordText(i);
-        if (!hasVisibleText(text)) continue;
+        if (!clippingText::hasVisibleText(text)) continue;
 
         const auto style = static_cast<EpdFontFamily::Style>(block->wordStyle(i) & ~EpdFontFamily::UNDERLINE);
         int width = renderer.getTextAdvanceX(fontId, text, style);
@@ -149,7 +136,7 @@ bool ClipSelectionActivity::extractWords() {
         word.endOffset = block->wordSourceRange(i).end;
         word.text = text;
         word.style = style;
-        word.paragraphStart = hasEmSpacePrefix(text);
+        word.paragraphStart = clippingText::hasEmSpacePrefix(text);
         word.isRtl = isRtl;
         if (pageText) {
           for (const char* p = text; *p != '\0' && pageTextLength + 1 < FONT_PREWARM_TEXT_MAX; ++p) {
@@ -790,17 +777,7 @@ void ClipSelectionActivity::drawSelection() const {
   for (int i = first; i <= last; ++i) {
     const WordBox& word = words[i];
     if (word.pageOffset != currentPageOffset) continue;
-    if (previous && previous->row == word.row) {
-      const int previousRight = previous->x + previous->width;
-      const int wordRight = word.x + word.width;
-      if (previousRight < word.x) {
-        renderer.fillRectDither(previousRight + offsetX, word.y + offset, word.x - previousRight, word.height,
-                                Color::LightGray);
-      } else if (wordRight < previous->x) {
-        renderer.fillRectDither(wordRight + offsetX, word.y + offset, previous->x - wordRight, word.height,
-                                Color::LightGray);
-      }
-    }
+    if (previous) ditherGapBetween(*previous, word, offsetX, offset);
     renderer.fillRectDither(word.x + offsetX, word.y + offset, word.width, word.height, Color::LightGray);
     renderer.drawText(fontId, word.x + offsetX, word.y + offset, word.text, true, word.style);
     previous = &word;

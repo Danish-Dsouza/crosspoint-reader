@@ -265,6 +265,20 @@ TEST(ClippingHighlight, RemovalMatchesPortableAndLegacyHighlightBoundaries) {
   EXPECT_FALSE(clippingContainsWord(clip, 2, 2, 11, 42, 4, 0, 1));
 }
 
+TEST(ClippingText, SharedPredicatesHandleEmptyWhitespaceAndUnicode) {
+  EXPECT_FALSE(clippingText::hasVisibleText(nullptr));
+  EXPECT_FALSE(clippingText::hasVisibleText(""));
+  EXPECT_FALSE(clippingText::hasVisibleText(" \t\r\n"));
+  EXPECT_TRUE(clippingText::hasVisibleText(" word"));
+  EXPECT_TRUE(clippingText::hasVisibleText("가"));
+  EXPECT_FALSE(clippingText::hasEmSpacePrefix(nullptr));
+  EXPECT_FALSE(clippingText::hasEmSpacePrefix(""));
+  EXPECT_FALSE(clippingText::hasEmSpacePrefix("word"));
+  EXPECT_FALSE(clippingText::hasEmSpacePrefix("\xe2"));
+  EXPECT_FALSE(clippingText::hasEmSpacePrefix("\xe2\x80"));
+  EXPECT_TRUE(clippingText::hasEmSpacePrefix("\xe2\x80\x83word"));
+}
+
 TEST(ClippingText, PreservesLiteralHyphensAndJoinsLayoutSplits) {
   std::string text;
   ASSERT_TRUE(clippingText::append(text, "well-", 0, 5, 0, 4096));
