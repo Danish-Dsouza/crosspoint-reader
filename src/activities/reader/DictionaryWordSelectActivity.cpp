@@ -173,17 +173,19 @@ void DictionaryWordSelectActivity::performLookup() {
     dictNeedsIndex = !ok;  // a successful build leaves the sidecar fresh; a failed one retries
   }
 
+  std::vector<Dictionary::Entry> entries;
   std::string definition;
-  std::string headword;
   Dictionary::LookupResult result = Dictionary::LookupResult::NotFound;
-  const bool found = ok && dict.lookup(words[selected].text, definition, headword, &result);
+  const bool found =
+      ok && dict.lookup(words[selected].text, entries, &result) && dict.readEntry(entries[0], definition, &result);
 
   if (found) {
     popup = Popup::None;
-    startActivityForResult(
-        std::make_unique<DictionaryDefinitionActivity>(renderer, mappedInput, std::move(headword),
-                                                       std::move(definition), dict.definitionsAreHtml()),
-        [this](const ActivityResult&) { requestUpdate(); });
+    std::string headword = entries[0].headword;
+    startActivityForResult(std::make_unique<DictionaryDefinitionActivity>(
+                               renderer, mappedInput, std::move(headword), std::move(definition),
+                               dict.definitionsAreHtml(), &dict, std::move(entries)),
+                           [this](const ActivityResult&) { requestUpdate(); });
     return;
   }
   // Name the failure: a genuine miss is "Not found"; a word that WAS found but
