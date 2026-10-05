@@ -46,8 +46,7 @@ std::string LcpPassphraseStore::get(const std::string& provider) const {
 }
 
 bool LcpPassphraseStore::put(const std::string& provider, const std::string& userKeyHex) {
-  const auto it =
-      std::find_if(entries.begin(), entries.end(), [&](const Entry& e) { return e.provider == provider; });
+  const auto it = std::find_if(entries.begin(), entries.end(), [&](const Entry& e) { return e.provider == provider; });
 
   if (userKeyHex.empty()) {
     if (it == entries.end()) return true;
