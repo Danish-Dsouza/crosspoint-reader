@@ -1,4 +1,5 @@
 #pragma once
+#include <LcpLicense.h>
 #include <OpdsClient.h>
 #include <OpdsEntry.h>
 #include <OpdsPublicationDoc.h>
@@ -117,6 +118,16 @@ class OpdsBookBrowserActivity final : public CatalogActivity {
   void buildBrowsingScreen(UiScreen& screen);
   static void onPageEvent(const freeink::ui::ActionEvent& event, void* user);
   static void onDetailEvent(const freeink::ui::ActionEvent& event, void* user);
+
+  // LCP acquisition: fetch the license, fulfill through the LCP service,
+  // then prompt for the passphrase and store the device-wrapped book key.
+  void downloadLcpBook(const OpdsEntry& book);
+  void promptLcpPassphrase(bool retry);
+  std::string downloadDestination(const OpdsEntry& book) const;
+  bool verifyAndRegisterEpub(const std::string& filename);
+  // Fulfilled LCP book awaiting its passphrase (path + parsed license).
+  freeink::content::LcpLicense pendingLcpLicense;
+  std::string pendingLcpPath;
 
   void fetchFeed(const std::string& path);
   void releaseEntries();

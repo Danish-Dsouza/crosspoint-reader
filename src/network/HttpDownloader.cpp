@@ -171,6 +171,76 @@ bool HttpDownloader::postForm(const std::string& url, const std::string& formBod
   return status >= 200 && status < 300;
 }
 
+HttpDownloader::DownloadError HttpDownloader::postToFile(const std::string& url, const std::string& body,
+                                                         const std::string& contentType, const std::string& destPath,
+                                                         ProgressCallback progress, const bool* cancelFlag) {
+  LOG_DBG("HTTP", "POST download: %s -> %s", url.c_str(), destPath.c_str());
+  WifiPowerSaveGuard psGuard;
+
+  const std::string partPath = destPath + ".part";
+  Storage.remove(partPath.c_str());
+  HalFile file;
+  if (!Storage.openFileForWrite("HTTP", partPath.c_str(), file)) {
+    LOG_ERR("HTTP", "Failed to open file for writing");
+    return FILE_ERROR;
+  }
+
+  freeink::SecureHttpClient http;
+  if (!http.begin(url)) {
+    LOG_ERR("HTTP", "bad URL: %s", url.c_str());
+    return HTTP_ERROR;
+  }
+  applyCommonClientSetup(http);
+  http.addHeader("Content-Type", contentType);
+
+  size_t downloaded = 0;
+  bool writeFailed = false;
+  const int status = http.sendRequest(
+      "POST", reinterpret_cast<const uint8_t*>(body.data()), body.size(),
+      [&](const uint8_t* data, size_t len) {
+        const int st = http.getStatus();
+        if (st < 200 || st >= 300) return true;  // drain the error body
+        if (file.write(data, len) != len) {
+          writeFailed = true;
+          return false;
+        }
+        downloaded += len;
+        if (progress && http.hasContentLength()) progress(downloaded, http.getContentLength());
+        return true;
+      },
+      [cancelFlag] { return cancelFlag && *cancelFlag; });
+  // Close before any remove() on the same path; DESTRUCTOR_CLOSES_FILE would
+  // otherwise close only after the remove.
+  if (file.isOpen()) file.close();
+
+  DownloadError result = OK;
+  if (http.aborted()) {
+    result = ABORTED;
+  } else if (writeFailed) {
+    result = FILE_ERROR;
+  } else if (status < 200 || status >= 300) {
+    LOG_ERR("HTTP", "POST failed: status %d: %s", status, url.c_str());
+    result = HTTP_ERROR;
+  } else if (downloaded == 0) {
+    LOG_ERR("HTTP", "no data received");
+    result = HTTP_ERROR;
+  } else if (http.hasContentLength() && downloaded != http.getContentLength()) {
+    LOG_ERR("HTTP", "POST response incomplete: %zu of %zu bytes", downloaded, (size_t)http.getContentLength());
+    result = HTTP_ERROR;
+  }
+  if (result != OK) {
+    Storage.remove(partPath.c_str());
+    return result;
+  }
+  if (!Storage.replaceFile(partPath.c_str(), destPath.c_str())) {
+    LOG_ERR("HTTP", "Failed to move download into place: %s", destPath.c_str());
+    Storage.remove(partPath.c_str());
+    return FILE_ERROR;
+  }
+  LOG_DBG("HTTP", "Downloaded %zu bytes", downloaded);
+  return OK;
+}
+
 HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& url, const std::string& destPath,
                                                              ProgressCallback progress, const bool* cancelFlag,
                                                              const std::string& username, const std::string& password,

@@ -7,17 +7,22 @@
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <I18n.h>
+#include <LcpLicense.h>
 #include <LibraryBuilder.h>
 #include <Logging.h>
+#include <Memory.h>
 #include <OpdsFeedParser.h>
 #include <OpdsPublicationDoc.h>
 #include <OpdsSearchTemplate.h>
+#include <WolfsslCrypto.h>
 
 #include <iterator>
 
+#include "BookKey.h"
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
 #include "OpdsTokenStore.h"
+#include "activities/util/KeyboardEntryActivity.h"
 #include "components/UITheme.h"
 #include "components/icons/opdsIcons.h"
 #include "network/HttpDownloader.h"
@@ -33,6 +38,10 @@ constexpr int16_t PAGE_FIRST = 0;
 constexpr int16_t PAGE_PREV = 1;
 constexpr int16_t PAGE_NEXT = 2;
 constexpr int16_t PAGE_LAST = 3;
+
+// Readium LCP fulfillment service (see the crosspoint-lcp repo): embeds a
+// POSTed license into its encrypted publication and returns the EPUB.
+constexpr const char* LCP_FULFILL_URL = "https://lcp.freeink.org/fulfill";
 
 // Accept-Language from the reader's UI language, so servers that localize the
 // catalog (e.g. Lirtuel) return it translated. Primary subtag plus an English
@@ -474,7 +483,57 @@ void OpdsBookBrowserActivity::onBackButton() {
   navigateBack();
 }
 
+// SD destination from the configured download folder + filename format.
+std::string OpdsBookBrowserActivity::downloadDestination(const OpdsEntry& book) const {
+  // opdsDownloadFolder is already a null-terminated char[64]; use it directly —
+  // no std::string copy. exists()/mkdir() take const char*.
+  const char* folder = SETTINGS.opdsDownloadFolder;  // "" => SD root
+  bool haveFolder = folder[0] != '\0';
+  if (haveFolder && !Storage.exists(folder) && !Storage.mkdir(folder)) {
+    // exists()-guard first: mkdir's return-on-existing is unconfirmed, and every
+    // existing caller checks exists() before mkdir. On real failure, fall back
+    // to SD root so the download is never lost.
+    LOG_ERR("OPDS", "mkdir failed for %s, using SD root", folder);
+    haveFolder = false;
+  }
+  // Titles are unbounded (a fixed char[] would truncate). Cold path (a
+  // multi-second download follows), so one reserve'd owning string is right.
+  std::string filename;
+  filename.reserve(96);
+  if (haveFolder) filename += folder;
+  filename += '/';
+  filename += opdsBookFilename(book.author, book.title, static_cast<OpdsFilenameFormat>(SETTINGS.opdsFilenameFormat));
+  return filename;
+}
+
+// A purchase link (or any misbehaving endpoint) can answer 200 with an HTML
+// page; a real EPUB is a ZIP container. Check the magic before accepting the
+// file, then register it with the caches. False = rejected (fail() called).
+bool OpdsBookBrowserActivity::verifyAndRegisterEpub(const std::string& filename) {
+  uint8_t magic[4] = {0};
+  {
+    HalFile check;
+    if (Storage.openFileForRead("OPDS", filename.c_str(), check)) {
+      check.read(magic, sizeof(magic));
+    }
+    if (check.isOpen()) check.close();  // close before any remove() on the same path
+  }
+  if (!(magic[0] == 'P' && magic[1] == 'K' && magic[2] == 3 && magic[3] == 4)) {
+    LOG_ERR("OPDS", "Downloaded file is not an EPUB (magic %02x%02x%02x%02x)", magic[0], magic[1], magic[2], magic[3]);
+    Storage.remove(filename.c_str());
+    fail(StrId::STR_OPDS_NOT_A_BOOK);
+    return false;
+  }
+  clearBookCache(filename);
+  library::markLibraryIndexDirty();
+  return true;
+}
+
 void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
+  if (book.lcpLicense) {
+    downloadLcpBook(book);
+    return;
+  }
   beginDownload(book.title);
 
   // Build full download URL relative to the current feed, not the root server URL
@@ -494,26 +553,7 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
     }
     downloadUrl = resolved;
   }
-  // opdsDownloadFolder is already a null-terminated char[64]; use it directly —
-  // no std::string copy. exists()/mkdir() take const char*.
-  const char* folder = SETTINGS.opdsDownloadFolder;  // "" => SD root
-  bool haveFolder = folder[0] != '\0';
-  if (haveFolder && !Storage.exists(folder) && !Storage.mkdir(folder)) {
-    // exists()-guard first: mkdir's return-on-existing is unconfirmed, and every
-    // existing caller checks exists() before mkdir. On real failure, fall back
-    // to SD root so the download is never lost.
-    LOG_ERR("OPDS", "mkdir failed for %s, using SD root", folder);
-    haveFolder = false;
-  }
-
-  // downloadToFile() needs a std::string, and titles are unbounded (a fixed
-  // char[] would truncate). Cold path (a multi-second download follows), so one
-  // reserve'd, in-place-appended owning string is the right call.
-  std::string filename;
-  filename.reserve(96);
-  if (haveFolder) filename += folder;
-  filename += '/';
-  filename += opdsBookFilename(book.author, book.title, static_cast<OpdsFilenameFormat>(SETTINGS.opdsFilenameFormat));
+  const std::string filename = downloadDestination(book);
   LOG_DBG("OPDS", "Downloading: %s -> %s", downloadUrl.c_str(), filename.c_str());
 
   // The selected book data is now copied into the download URL, filename, and
@@ -528,29 +568,122 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
   // floor, and pumps cancel input during the transfer.
   const auto result = downloadFile(downloadUrl, filename, dlAuth.username, dlAuth.password, headers);
 
-  if (result == HttpDownloader::OK) {
-    // A purchase link (or any misbehaving endpoint) can answer 200 with an
-    // HTML page; a real EPUB is a ZIP container. Check the magic before
-    // accepting the file.
-    uint8_t magic[4] = {0};
-    {
-      HalFile check;
-      if (Storage.openFileForRead("OPDS", filename.c_str(), check)) {
-        check.read(magic, sizeof(magic));
-      }
-      if (check.isOpen()) check.close();  // close before any remove() on the same path
-    }
-    if (!(magic[0] == 'P' && magic[1] == 'K' && magic[2] == 3 && magic[3] == 4)) {
-      LOG_ERR("OPDS", "Downloaded file is not an EPUB (magic %02x%02x%02x%02x)", magic[0], magic[1], magic[2],
-              magic[3]);
-      Storage.remove(filename.c_str());
-      fail(StrId::STR_OPDS_NOT_A_BOOK);
+  if (result == HttpDownloader::OK && !verifyAndRegisterEpub(filename)) return;
+  finishDownload(result);
+}
+
+// LCP acquisition: the href is a small license document (.lcpl), not the
+// book. Fetch it with the catalog's credentials, have the fulfillment
+// service embed it into the encrypted EPUB, then ask for the passphrase and
+// store the unwrapped content key as the book's device-wrapped .key sidecar.
+// From there the standard protected-read path opens it; the reader itself
+// carries no LCP knowledge.
+void OpdsBookBrowserActivity::downloadLcpBook(const OpdsEntry& book) {
+  beginDownload(book.title);
+
+  const std::string feedUrl = UrlUtils::buildUrl(server.url, currentPath);
+  const std::string licenseUrl = UrlUtils::buildUrl(feedUrl, book.href);
+
+  // The license fetch uses the catalog's own credentials; the fulfillment
+  // service only ever sees the license document itself.
+  std::string licenseText;
+  {
+    int status = 0;
+    HttpDownloader::FetchOptions options;
+    const freeink::opds::HttpAuth auth = opdsClient.downloadAuth();
+    options.username = auth.username;
+    options.password = auth.password;
+    options.bearer = auth.bearer;
+    options.statusOut = &status;
+    constexpr size_t MAX_LICENSE_BYTES = 256 * 1024;
+    const bool ok = HttpDownloader::fetchUrl(
+        licenseUrl,
+        [&licenseText](const uint8_t* data, size_t len) {
+          if (licenseText.size() + len > MAX_LICENSE_BYTES) return false;
+          licenseText.append(reinterpret_cast<const char*>(data), len);
+          return true;
+        },
+        options);
+    if (!ok || licenseText.empty()) {
+      LOG_ERR("OPDS", "LCP license fetch failed (status %d)", status);
+      fail(StrId::STR_FETCH_FEED_FAILED);
       return;
     }
-    clearBookCache(filename);
-    library::markLibraryIndexDirty();
   }
-  finishDownload(result);
+
+  freeink::content::LcpLicense license;
+  if (!freeink::content::parseLcpLicense(licenseText.data(), licenseText.size(), &license)) {
+    fail(StrId::STR_OPDS_NOT_A_BOOK);
+    return;
+  }
+  if (!license.isBasicProfile()) {
+    // The 1.0 production profile needs the certified user-key transform;
+    // only the open basic profile is supported so far.
+    fail(StrId::STR_LCP_UNSUPPORTED);
+    return;
+  }
+
+  const std::string filename = downloadDestination(book);
+  LOG_DBG("OPDS", "LCP fulfill: %s -> %s", licenseUrl.c_str(), filename.c_str());
+
+  // Reclaim the catalog while TLS owns its record buffers, as for a plain
+  // download; downloadFile() gates the heap and pumps cancel input.
+  releaseEntries();
+  const auto result = downloadFile(LCP_FULFILL_URL, filename, "", "", {}, &licenseText,
+                                   "application/vnd.readium.lcp.license.v1.0+json");
+  if (result != HttpDownloader::OK) {
+    finishDownload(result);
+    return;
+  }
+  if (!verifyAndRegisterEpub(filename)) return;
+
+  pendingLcpLicense = std::move(license);
+  pendingLcpPath = filename;
+  promptLcpPassphrase(/*retry=*/false);
+}
+
+void OpdsBookBrowserActivity::promptLcpPassphrase(const bool retry) {
+  state = State::AUTH;
+  statusMessage = tr(STR_LCP_PASSPHRASE);
+  requestUpdate();
+  // The license's hint is the prompt the provider wrote for this passphrase.
+  const char* title = retry                             ? tr(STR_LCP_WRONG_PASSPHRASE)
+                      : !pendingLcpLicense.hint.empty() ? pendingLcpLicense.hint.c_str()
+                                                        : tr(STR_LCP_PASSPHRASE);
+  auto keyboard = makeUniqueNoThrow<KeyboardEntryActivity>(renderer, mappedInput, title);
+  if (!keyboard) {
+    fail(StrId::STR_MEMORY_ERROR);
+    return;
+  }
+  startActivityForResult(std::move(keyboard), [this](const ActivityResult& result) {
+    if (result.isCancelled) {
+      // Keep the book: without its key the reader shows the DRM message, and
+      // re-downloading the title re-offers the passphrase prompt.
+      downloadFinished(false);
+      return;
+    }
+    const std::string pass = std::get<KeyboardResult>(result.data).text;
+    freeink::content::WolfsslCrypto crypto;
+    uint8_t userKey[32];
+    freeink::content::lcpUserKey(crypto, pass.data(), pass.size(), userKey);
+    if (!freeink::content::lcpCheckUserKey(crypto, pendingLcpLicense, userKey)) {
+      promptLcpPassphrase(/*retry=*/true);
+      return;
+    }
+    uint8_t contentKey[32];
+    if (!freeink::content::lcpContentKey(crypto, pendingLcpLicense, userKey, contentKey)) {
+      fail(StrId::STR_LCP_UNSUPPORTED);
+      return;
+    }
+    const int64_t expiresAt = pendingLcpLicense.rightsEnd.empty()
+                                  ? 0
+                                  : freeink::content::lcpParseIso8601(pendingLcpLicense.rightsEnd.c_str());
+    if (!bookkey::write(pendingLcpPath, contentKey, sizeof(contentKey), expiresAt)) {
+      fail(StrId::STR_DOWNLOAD_FAILED);
+      return;
+    }
+    downloadFinished(false);
+  });
 }
 
 void OpdsBookBrowserActivity::onDetailEvent(const fui::ActionEvent&, void* user) {

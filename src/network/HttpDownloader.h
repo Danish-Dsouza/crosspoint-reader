@@ -93,4 +93,14 @@ class HttpDownloader {
                                       ProgressCallback progress = nullptr, const bool* cancelFlag = nullptr,
                                       const std::string& username = "", const std::string& password = "",
                                       const std::vector<Header>& headers = {}, bool downgradeRedirectsToHttp = false);
+
+  /**
+   * POST a body (e.g. an LCP license to the fulfillment service) and stream
+   * the response to the SD card, staged through "<dest>.part" like
+   * downloadToFile. Single attempt, no redirects or Range resume: the
+   * endpoint is ours and answers directly.
+   */
+  static DownloadError postToFile(const std::string& url, const std::string& body, const std::string& contentType,
+                                  const std::string& destPath, ProgressCallback progress = nullptr,
+                                  const bool* cancelFlag = nullptr);
 };
